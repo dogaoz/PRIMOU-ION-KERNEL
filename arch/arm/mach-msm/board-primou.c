@@ -14,7 +14,6 @@
 #include <linux/kernel.h>
 #include <linux/irq.h>
 #include <linux/gpio.h>
-#include <linux/gpio_keys.h>
 #include <linux/platform_device.h>
 #include <linux/delay.h>
 #include <linux/bootmem.h>
@@ -30,10 +29,16 @@
 #include <linux/cm3629.h>
 #include <linux/lightsensor.h>
 #include <linux/input.h>
+#include <linux/atmel_qt602240.h>
 #include <linux/synaptics_i2c_rmi.h>
+#include <linux/himax8526a.h>
+#include <linux/smsc911x.h>
+#include <linux/ofn_atlab.h>
 #include <linux/power_supply.h>
 #include <linux/i2c/isa1200.h>
+#include <linux/input/kp_flip_switch.h>
 #include <linux/leds-pm8058.h>
+#include <linux/input/cy8c_ts.h>
 #include <linux/msm_adc.h>
 #include <linux/dma-mapping.h>
 #include <linux/proc_fs.h>
@@ -48,7 +53,11 @@
 #include <mach/camera-7x30.h>
 #include <mach/memory.h>
 #include <mach/msm_iomap.h>
+#ifdef CONFIG_USB_MSM_OTG_72K
+#include <mach/msm_hsusb.h>
+#else
 #include <linux/usb/msm_hsusb.h>
+#endif
 #include <mach/msm_spi.h>
 #include <mach/qdsp5v2_2x/msm_lpa.h>
 #include <mach/dma.h>
@@ -92,9 +101,11 @@
 #include <mach/sdio_al.h>
 #include "smd_private.h"
 #include "board-primou.h"
-#include <linux/tpa2051d3.h>
+#include <mach/tpa2051d3.h>
 #include "board-msm7x30-regulator.h"
 #include <mach/board_htc.h>
+#include <linux/ion.h>
+#include <mach/ion.h>
 
 #ifdef CONFIG_BT
 #include <mach/htc_bdaddress.h>
@@ -104,8 +115,14 @@
 #include <mach/bcm_bt_lpm.h>
 #endif
 
+#ifdef CONFIG_ION_MSM
+static struct platform_device ion_dev;
+#define MSM_ION_AUDIO_SIZE	MSM_PMEM_AUDIO_SIZE
+#define MSM_ION_SF_SIZE		MSM_PMEM_SF_SIZE
+#define MSM_ION_HEAP_NUM	4
+#endif
+
 #define GPIO_2MA       0
-#define GPIO_4MA	1
 #define PMIC_VREG_WLAN_LEVEL	2900
 
 #define ADV7520_I2C_ADDR	0x39
@@ -166,6 +183,227 @@ static void config_gpio_table(uint32_t *table, int len)
 	}
 }
 
+static int primou_ts_power(int on)
+{
+	pr_info("%s: power %d\n", __func__, on);
+
+	if (on == 1) {
+		gpio_set_value(PM8058_GPIO_PM_TO_SYS(PRIMOU_TP_RSTz), 1);
+	} else if (on == 2) {
+		gpio_set_value(PM8058_GPIO_PM_TO_SYS(PRIMOU_TP_RSTz), 0);
+		msleep(5);
+		gpio_set_value(PM8058_GPIO_PM_TO_SYS(PRIMOU_TP_RSTz), 1);
+		msleep(40);
+	}
+
+	return 0;
+}
+
+struct atmel_i2c_platform_data primou_ts_atmel_data[] = {
+	{
+		.version = 0x0011,
+		.build = 0xAA,
+		.source = 1, /* ALPS */
+		.abs_x_min = 0,
+		.abs_x_max = 479,
+		.abs_y_min = 0,
+		.abs_y_max = 948,
+		.abs_pressure_min = 0,
+		.abs_pressure_max = 255,
+		.abs_width_min = 0,
+		.abs_width_max = 20,
+		.gpio_irq = PRIMOU_GPIO_TP_ATT_N,
+		.power = primou_ts_power,
+		.unlock_attr = 1,
+		.config_T6 = {0, 0, 0, 0, 0, 0},
+		.config_T7 = {15, 10, 50},
+		.config_T8 = {30, 0, 5, 5, 0, 64, 2, 30, 16, 192},
+		.config_T9 = {139, 0, 0, 19, 11, 0, 16, 45, 2, 1, 0, 5, 2, 0, 5, 20, 17, 15, 0, 0, 223, 1, 5, 0, 50, 50, 148, 40, 143, 35, 18, 15, 58, 59, 0},
+		.config_T15 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		.config_T18 = {0, 0},
+		.config_T19 = {3, 0, 0, 60, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		.config_T23 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		.config_T25 = {3, 0, 96, 109, 216, 89, 0, 0, 0, 0, 0, 0, 0, 0},
+		.config_T40 = {0, 0, 0, 0, 0},
+		.config_T42 = {0, 50, 20, 20, 250, 3, 0, 5},
+		.config_T46 = {0, 3, 16, 16, 0, 0, 0, 0, 0},
+		.config_T47 = {0, 20, 50, 5, 2, 50, 40, 0, 0, 63},
+		.config_T48 = {15, 0, 66, 8, 0, 0, 0, 0, 18, 30, 0, 10, 0, 6, 6, 0, 0, 100, 4, 64, 10, 0, 20, 5, 0, 38, 0, 20, 0, 1, 15, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		.config_T55 = {0, 0, 0, 0},
+		.config_T58 = {114, 35, 3, 0, 50, 0, 0, 0, 0, 0, 0},
+		.object_crc = {0x57, 0x79, 0xB9},
+		.cable_config = {60, 30, 16, 16, 0, 0},
+		.mferr_config = {85, 60, 16, 32, 0, 0, 3, 2, 0, 0, 0, 0, 0},
+		.filter_level = {6, 18, 462, 474},
+	},
+	{
+		.version = 0x0011,
+		.build = 0xAA,
+		.source = 0, /* J-Touch */
+		.abs_x_min = 0,
+		.abs_x_max = 479,
+		.abs_y_min = 0,
+		.abs_y_max = 948,
+		.abs_pressure_min = 0,
+		.abs_pressure_max = 255,
+		.abs_width_min = 0,
+		.abs_width_max = 20,
+		.gpio_irq = PRIMOU_GPIO_TP_ATT_N,
+		.power = primou_ts_power,
+		.unlock_attr = 1,
+		.config_T6 = {0, 0, 0, 0, 0, 0},
+		.config_T7 = {15, 10, 50},
+		.config_T8 = {30, 0, 5, 5, 0, 64, 2, 30, 16, 192},
+		.config_T9 = {139, 0, 0, 19, 11, 0, 16, 45, 2, 1, 0, 5, 2, 0, 5, 20, 17, 15, 0, 0, 223, 1, 0, 0, 45, 45, 143, 50, 140, 25, 18, 15, 58, 59, 0},
+		.config_T15 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		.config_T18 = {0, 0},
+		.config_T19 = {3, 0, 0, 60, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		.config_T23 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		.config_T25 = {3, 0, 96, 109, 216, 89, 0, 0, 0, 0, 0, 0, 0, 0},
+		.config_T40 = {0, 0, 0, 0, 0},
+		.config_T42 = {0, 50, 20, 20, 250, 3, 0, 5},
+		.config_T46 = {0, 3, 16, 16, 0, 0, 0, 0, 0},
+		.config_T47 = {0, 20, 50, 5, 2, 50, 40, 0, 0, 63},
+		.config_T48 = {15, 0, 66, 8, 0, 0, 0, 0, 18, 30, 0, 20, 0, 6, 6, 0, 0, 100, 4, 64, 10, 0, 20, 5, 0, 38, 0, 20, 0, 1, 15, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		.config_T55 = {0, 0, 0, 0},
+		.config_T58 = {114, 35, 3, 0, 50, 0, 0, 0, 0, 0, 0},
+		.object_crc = {0x73, 0x1C, 0x4E},
+		.cable_config = {60, 30, 16, 16, 0, 0},
+		.mferr_config = {85, 60, 16, 32, 0, 0, 3, 2, 0, 0, 0, 0, 0},
+		.filter_level = {6, 18, 462, 474},
+	},
+	{
+		.version = 0x0011,
+		.build = 0xF8,
+		.source = 1, /* ALPS */
+		.abs_x_min = 0,
+		.abs_x_max = 479,
+		.abs_y_min = 0,
+		.abs_y_max = 948,
+		.abs_pressure_min = 0,
+		.abs_pressure_max = 255,
+		.abs_width_min = 0,
+		.abs_width_max = 20,
+		.gpio_irq = PRIMOU_GPIO_TP_ATT_N,
+		.power = primou_ts_power,
+		.unlock_attr = 1,
+		.config_T6 = {0, 0, 0, 0, 0, 0},
+		.config_T7 = {15, 10, 50},
+		.config_T8 = {30, 0, 5, 5, 0, 64, 2, 30, 16, 192},
+		.config_T9 = {139, 0, 0, 19, 11, 0, 16, 45, 2, 1, 0, 5, 2, 0, 5, 20, 17, 15, 0, 0, 223, 1, 5, 0, 50, 50, 148, 40, 143, 35, 18, 15, 58, 59, 0},
+		.config_T15 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		.config_T18 = {0, 0},
+		.config_T19 = {3, 0, 0, 60, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		.config_T23 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		.config_T25 = {3, 0, 96, 109, 216, 89, 0, 0, 0, 0, 0, 0, 0, 0},
+		.config_T40 = {0, 0, 0, 0, 0},
+		.config_T42 = {0, 0, 0, 0, 0, 0, 0, 0},
+		.config_T46 = {0, 3, 16, 16, 0, 0, 0, 0, 0},
+		.config_T47 = {0, 20, 50, 5, 2, 50, 40, 0, 0, 63},
+		.config_T48 = {15, 0, 66, 8, 0, 0, 0, 0, 18, 30, 0, 10, 0, 6, 6, 0, 0, 100, 4, 64, 10, 0, 20, 5, 0, 38, 0, 20, 0, 1, 15, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		.object_crc = {0xDD, 0x54, 0x94},
+		.cable_config = {60, 30, 16, 16, 0, 0},
+		.noiseLine_config = {85, 60, 16, 32, 0, 0, 5, 1},
+		.filter_level = {6, 18, 462, 474},
+	},
+	{
+		.version = 0x0011,
+		.build = 0xF8,
+		.source = 0, /* J-Touch */
+		.abs_x_min = 0,
+		.abs_x_max = 479,
+		.abs_y_min = 0,
+		.abs_y_max = 948,
+		.abs_pressure_min = 0,
+		.abs_pressure_max = 255,
+		.abs_width_min = 0,
+		.abs_width_max = 20,
+		.gpio_irq = PRIMOU_GPIO_TP_ATT_N,
+		.power = primou_ts_power,
+		.unlock_attr = 1,
+		.config_T6 = {0, 0, 0, 0, 0, 0},
+		.config_T7 = {15, 10, 50},
+		.config_T8 = {30, 0, 5, 5, 0, 64, 2, 30, 16, 192},
+		.config_T9 = {139, 0, 0, 19, 11, 0, 16, 45, 2, 1, 0, 5, 2, 0, 5, 20, 17, 15, 0, 0, 223, 1, 0, 0, 45, 45, 143, 50, 140, 25, 18, 15, 58, 59, 0},
+		.config_T15 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		.config_T18 = {0, 0},
+		.config_T19 = {3, 0, 0, 60, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		.config_T23 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		.config_T25 = {3, 0, 96, 109, 216, 89, 0, 0, 0, 0, 0, 0, 0, 0},
+		.config_T40 = {0, 0, 0, 0, 0},
+		.config_T42 = {0, 0, 0, 0, 0, 0, 0, 0},
+		.config_T46 = {0, 3, 16, 16, 0, 0, 0, 0, 0},
+		.config_T47 = {0, 20, 50, 5, 2, 50, 40, 0, 0, 63},
+		.config_T48 = {15, 0, 66, 8, 0, 0, 0, 0, 18, 30, 0, 10, 0, 6, 6, 0, 0, 100, 4, 64, 10, 0, 20, 5, 0, 38, 0, 20, 0, 1, 15, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		.object_crc = {0x8C, 0xE8, 0x03},
+		.cable_config = {60, 30, 16, 16, 0, 0},
+		.noiseLine_config = {85, 60, 16, 32, 0, 0, 5, 1},
+		.filter_level = {6, 18, 462, 474},
+	},
+	{
+		.version = 0x0010,
+		.build = 0xAA,
+		.source = 1, /* ALPS */
+		.abs_x_min = 0,
+		.abs_x_max = 479,
+		.abs_y_min = 0,
+		.abs_y_max = 948,
+		.abs_pressure_min = 0,
+		.abs_pressure_max = 255,
+		.abs_width_min = 0,
+		.abs_width_max = 20,
+		.gpio_irq = PRIMOU_GPIO_TP_ATT_N,
+		.power = primou_ts_power,
+		.unlock_attr = 1,
+		.config_T6 = {0, 0, 0, 0, 0, 0},
+		.config_T7 = {15, 8, 50},
+		.config_T8 = {30, 0, 5, 5, 0, 0, 5, 30, 5, 192},
+		.config_T9 = {139, 0, 0, 19, 11, 0, 16, 45, 3, 1, 0, 5, 2, 0, 5, 15, 15, 15, 0, 0, 223, 1, 5, 0, 50, 50, 148, 40, 143, 35, 18, 15, 58, 59, 0},
+		.config_T15 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		.config_T18 = {0, 0},
+		.config_T19 = {3, 0, 0, 60, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		.config_T23 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		.config_T25 = {3, 0, 96, 109, 216, 89, 0, 0, 0, 0, 0, 0, 0, 0},
+		.config_T40 = {0, 0, 0, 0, 0},
+		.config_T42 = {0, 0, 0, 0, 0, 0, 0, 0},
+		.config_T46 = {0, 3, 8, 8, 0, 0, 0, 0, 0},
+		.config_T47 = {0, 20, 50, 5, 2, 50, 40, 0, 0, 63},
+		.config_T48 = {15, 68, 96, 0, 0, 0, 0, 0, 12, 12, 0, 0, 0, 6, 6, 0, 0, 100, 4, 64, 10, 0, 20, 5, 0, 38, 0, 20, 0, 0, 0, 0, 0, 0, 0, 35, 3, 5, 2, 0, 5, 10, 10, 239, 238, 35, 35, 143, 75, 138, 50, 18, 17, 4},
+		.object_crc = {0xF4, 0xBE, 0xC7},
+	},
+	{
+		.version = 0x0010,
+		.build = 0xAA,
+		.source = 0, /* J-Touch */
+		.abs_x_min = 0,
+		.abs_x_max = 479,
+		.abs_y_min = 0,
+		.abs_y_max = 948,
+		.abs_pressure_min = 0,
+		.abs_pressure_max = 255,
+		.abs_width_min = 0,
+		.abs_width_max = 20,
+		.gpio_irq = PRIMOU_GPIO_TP_ATT_N,
+		.power = primou_ts_power,
+		.unlock_attr = 1,
+		.config_T6 = {0, 0, 0, 0, 0, 0},
+		.config_T7 = {15, 8, 50},
+		.config_T8 = {30, 0, 5, 5, 0, 0, 5, 30, 5, 192},
+		.config_T9 = {139, 0, 0, 19, 11, 0, 16, 45, 3, 1, 0, 5, 2, 0, 5, 15, 15, 15, 0, 0, 223, 1, 0, 0, 45, 45, 143, 50, 140, 25, 18, 15, 58, 59, 0},
+		.config_T15 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		.config_T18 = {0, 0},
+		.config_T19 = {3, 0, 0, 60, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		.config_T23 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		.config_T25 = {3, 0, 96, 109, 216, 89, 0, 0, 0, 0, 0, 0, 0, 0},
+		.config_T40 = {0, 0, 0, 0, 0},
+		.config_T42 = {0, 0, 0, 0, 0, 0, 0, 0},
+		.config_T46 = {0, 3, 8, 8, 0, 0, 0, 0, 0},
+		.config_T47 = {0, 20, 50, 5, 2, 50, 40, 0, 0, 63},
+		.config_T48 = {15, 68, 96, 0, 0, 0, 0, 0, 12, 12, 0, 0, 0, 6, 6, 0, 0, 100, 4, 64, 10, 0, 20, 5, 0, 38, 0, 20, 0, 0, 0, 0, 0, 0, 0, 35, 3, 5, 2, 0, 5, 10, 10, 239, 238, 35, 35, 143, 75, 138, 50, 18, 17, 4},
+		.object_crc = {0xB1, 0x91, 0x12},
+	},
+};
+
 static struct synaptics_i2c_rmi_platform_data primou_ts_synaptics_data[] = { /* Synatpics sensor */
 	{
 		.version = 0x3330,
@@ -178,12 +416,12 @@ static struct synaptics_i2c_rmi_platform_data primou_ts_synaptics_data[] = { /* 
 		.default_config = 3,
 		.large_obj_check = 1,
 		.customer_register = {0xF9, 0x64, 0x63, 0x32},
-		.config = {0x45, 0x30, 0x30, 0x46, 0x00, 0x3F, 0x03, 0x1E,
+		.config = {0x45, 0x30, 0x30, 0x43, 0x00, 0x3F, 0x03, 0x1E,
 			0x05, 0xB1, 0x88, 0x0B, 0x19, 0x19, 0x00, 0x00,
 			0x4C, 0x04, 0x6C, 0x07, 0x02, 0x14, 0x1E, 0x05,
 			0x32, 0x05, 0x11, 0x96, 0x02, 0x01, 0x3C, 0x23,
 			0x00, 0x23, 0x00, 0xB2, 0x49, 0x34, 0x48, 0xF8,
-			0xA7, 0xF8, 0xA7, 0x00, 0x40, 0x00, 0x00, 0x00,
+			0xA7, 0xF8, 0xA7, 0x00, 0x50, 0x00, 0x00, 0x00,
 			0x00, 0x0A, 0x04, 0xC0, 0x00, 0x00, 0x00, 0x00,
 			0x00, 0x00, 0x19, 0x01, 0x00, 0x0A, 0x40, 0x32,
 			0xA3, 0x03, 0x23, 0x07, 0x07, 0x6E, 0x0B, 0x13,
@@ -196,9 +434,9 @@ static struct synaptics_i2c_rmi_platform_data primou_ts_synaptics_data[] = { /* 
 			0x07, 0x05, 0x03, 0xFF, 0xC0, 0xA0, 0xA0, 0xA0,
 			0xA0, 0xA0, 0xA8, 0xA8, 0x48, 0x46, 0x45, 0x43,
 			0x42, 0x41, 0x3F, 0x3D, 0x00, 0x02, 0x04, 0x06,
-			0x08, 0x0A, 0x0C, 0x0F, 0x00, 0x88, 0x13, 0xCD,
-			0x64, 0x00, 0xC8, 0x00, 0x80, 0x0A, 0x80, 0xB8,
-			0x0B, 0x00, 0xC0, 0x80, 0x00, 0x10, 0x00, 0x10,
+			0x08, 0x0A, 0x0C, 0x0F, 0x00, 0xA0, 0x0F, 0xFD,
+			0x28, 0x00, 0x20, 0x4E, 0xB3, 0xC8, 0xCD, 0xA0,
+			0x0F, 0x00, 0xC0, 0x80, 0x00, 0x10, 0x00, 0x10,
 			0x00, 0x10, 0x00, 0x10, 0x80, 0x80, 0x80, 0x80,
 			0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
 			0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
@@ -206,7 +444,7 @@ static struct synaptics_i2c_rmi_platform_data primou_ts_synaptics_data[] = { /* 
 			0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x02, 0x02,
 			0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x20, 0x20,
 			0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x55, 0x58,
-			0x5A, 0x5C, 0x5E, 0x60, 0x62, 0x65, 0x00, 0x8C,
+			0x5A, 0x5C, 0x5E, 0x60, 0x62, 0x65, 0x00, 0x28,
 			0x00, 0x10, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00,
 			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 			0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
@@ -366,6 +604,431 @@ static struct synaptics_i2c_rmi_platform_data primou_ts_synaptics_data[] = { /* 
 	},
 };
 
+static void himax_ts_reset(void)
+{
+	printk(KERN_INFO "%s():\n", __func__);
+	gpio_direction_output(PM8058_GPIO_PM_TO_SYS(PRIMOU_TP_RSTz), 0);
+	mdelay(10);
+	gpio_direction_output(PM8058_GPIO_PM_TO_SYS(PRIMOU_TP_RSTz), 1);
+}
+
+static int himax_ts_loadSensorConfig(struct i2c_client *client, struct himax_i2c_platform_data *pdata, struct himax_config_init_api *i2c_api);
+
+struct himax_i2c_platform_data_config_type_3 config_type3[] = {
+	{
+		.version = 0x0D,
+		.tw_id = 0,/* Panasonic */
+
+		.c1 = { 0x62, 0x12, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00 },
+		.c2 = { 0x63, 0x02, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00 },
+		.c3 = { 0x64, 0x13, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00 },
+		.c4 = { 0x65, 0x02, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00 },
+		.c5 = { 0x66, 0x13, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00 },
+		.c6 = { 0x67, 0x42, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00 },
+		.c7 = { 0x68, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00 },
+		.c8 = { 0x69, 0x42, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00 },
+		.c9 = { 0x6A, 0x32, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00 },
+		.c10 = { 0x6B, 0x40, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+		.c11 = { 0x6C, 0x12, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00 },
+		.c12 = { 0x6D, 0x41, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00 },
+		.c13 = { 0xC9, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x0A, 0x0B,
+			  0x0D, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x20, 0x1E,
+			  0x21, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+		.c14 = { 0x8A, 0x00, 0x04, 0x00, 0x04, 0x00, 0x08, 0x2A, 0x0F, 0x4F, 0x70,
+			  0x28, 0x0F, 0x00, 0x86, 0x01, 0xC5, 0x39, 0xE0, 0x0F, 0x00, 0x0B,
+			  0x07, 0xFF, 0xFF, 0x0C, 0x06, 0xFF, 0xFF, 0x0D, 0xFF, 0x08, 0xFF,
+			  0x0E, 0x05, 0xFF, 0xFF, 0x0F, 0xFF, 0x09, 0x1A, 0xFF, 0x04, 0x1C,
+			  0x19, 0xFF, 0xFF, 0x0A, 0x18, 0xFF, 0x03, 0x1B, 0x17, 0xFF, 0x02,
+			  0x1D, 0x16, 0x10, 0xFF, 0xFF, 0x15, 0x11, 0x01, 0xFF, 0x14, 0x00,
+			  0x12, 0xFF, 0x13, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+		.c15 = { 0xC5, 0x0D, 0x1F, 0x00, 0x10, 0x1B, 0x1F, 0x0B },
+		.c16 = { 0xC6, 0x11, 0x10, 0x17 },
+		.c17 = { 0x7D, 0x00, 0x04, 0x0A, 0x0A, 0x02 },
+		.c18 = { 0x7F, 0x08, 0x01, 0x01, 0x01, 0x01, 0x07, 0x08, 0x07, 0x0F, 0x07,
+			  0x0F, 0x07, 0x0F, 0x00 },
+		.c19 = { 0xD5, 0x29, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			  0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+		.c20 = { 0xE9, 0x00, 0x00 },
+		.c21 = { 0xEA, 0x0B, 0x13, 0x00, 0x13 },
+		.c22 = { 0xEB, 0x32, 0x32, 0xFA, 0x83 },
+		.c23 = { 0xEC, 0x03, 0x0F, 0x0A, 0x2D, 0x2D, 0x00, 0x00, 0x00, 0x00 },
+		.c24 = { 0xED, 0x08, 0x06, 0x00, 0x00 },
+		.c25 = { 0xEE, 0x00 },
+		.c26 = { 0xEF, 0x11, 0x00 },
+		.c27 = { 0xF0, 0x40 },
+		.c28 = { 0xF1, 0x06, 0x04, 0x06, 0x03 },
+		.c29 = { 0xF2, 0x0A, 0x06, 0x14, 0x3C },
+		.c30 = { 0xF3, 0x5F },
+		.c31 = { 0xF4, 0x7D, 0xB9, 0x2D, 0x3A },
+		.c32 = { 0xF6, 0x00, 0x00, 0x1D, 0x76, 0x08 },
+		.c33 = { 0xF7, 0x20, 0x78, 0x8F, 0x0F, 0x40 },
+		.c34 = { 0x35, 0x02, 0x01 },
+		.c35 = { 0x36, 0x0F, 0x53, 0x01 },
+		.c36 = { 0x37, 0xFF, 0x08, 0xFF, 0x08 },
+		.c37 = { 0x39, 0x03 },
+		.c38 = { 0x3A, 0x00 },
+		.c39 = { 0x50, 0xAB },
+		.c40 = { 0x6E, 0x04 },
+		.c41 = { 0x76, 0x01, 0x2D },
+		.c42 = { 0x78, 0x03 },
+		.c43 = { 0x7A, 0x00, 0x18, 0x0D },
+		.c44 = { 0x8B, 0x00, 0x00 },
+		.c45 = { 0x8C, 0x30, 0x0C, 0x0C, 0x0C, 0x0C, 0x08, 0x0C, 0x32, 0x24, 0x80,
+			  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+		.c46 = { 0x8D, 0xA0, 0x5A, 0x14, 0x0A, 0x32, 0x0A, 0x00, 0x00, 0x00, 0x00,
+			  0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+		.c47 = { 0xC2, 0x11, 0x00, 0x00, 0x00 },
+		.c48 = { 0xCB, 0x01, 0xF5, 0xFF, 0xFF, 0x01, 0x00, 0x05, 0x00, 0x05, 0x00 },
+		.c49 = { 0xD4, 0x01, 0x04, 0x07 },
+		.c50 = { 0xDD, 0x05, 0x02 },
+		.checksum = { 0xAC, 0x5C, 0x4C },
+	},
+	{
+		.version = 0x0D,
+		.tw_id = 1,/* Nissha */
+
+		.c1 = { 0x62, 0x12, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00 },
+		.c2 = { 0x63, 0x02, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00 },
+		.c3 = { 0x64, 0x13, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00 },
+		.c4 = { 0x65, 0x02, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00 },
+		.c5 = { 0x66, 0x13, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00 },
+		.c6 = { 0x67, 0x42, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00 },
+		.c7 = { 0x68, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00 },
+		.c8 = { 0x69, 0x42, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00 },
+		.c9 = { 0x6A, 0x32, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00 },
+		.c10 = { 0x6B, 0x40, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+		.c11 = { 0x6C, 0x12, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00 },
+		.c12 = { 0x6D, 0x41, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00 },
+		.c13 = { 0xC9, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x0A, 0x0B,
+			 0x0D, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x20, 0x1E,
+			 0x21, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+		.c14 = { 0x8A, 0x00, 0x04, 0x00, 0x04, 0x00, 0x08, 0x2A, 0x0F, 0x4F, 0x70,
+			 0x28, 0x0F, 0x00, 0x86, 0x01, 0xC5, 0x39, 0xE0, 0x0F, 0x00, 0x0B,
+			 0x07, 0xFF, 0xFF, 0x0C, 0x06, 0xFF, 0xFF, 0x0D, 0xFF, 0x08, 0xFF,
+			 0x0E, 0x05, 0xFF, 0xFF, 0x0F, 0xFF, 0x09, 0x1A, 0xFF, 0x04, 0x1C,
+			 0x19, 0xFF, 0xFF, 0x0A, 0x18, 0xFF, 0x03, 0x1B, 0x17, 0xFF, 0x02,
+			 0x1D, 0x16, 0x10, 0xFF, 0xFF, 0x15, 0x11, 0x01, 0xFF, 0x14, 0x00,
+			 0x12, 0xFF, 0x13, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+		.c15 = { 0xC5, 0x0A, 0x1F, 0x00, 0x10, 0x1B, 0x1F, 0x0B },
+		.c16 = { 0xC6, 0x11, 0x10, 0x16 },
+		.c17 = { 0x7D, 0x00, 0x04, 0x0A, 0x0A, 0x02 },
+		.c18 = { 0x7F, 0x0A, 0x01, 0x01, 0x01, 0x01, 0x06, 0x04, 0x07, 0x0D, 0x07,
+			 0x0D, 0x07, 0x0D, 0x00 },
+		.c19 = { 0xD5, 0x29, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+		.c20 = { 0xE9, 0x00, 0x00 },
+		.c21 = { 0xEA, 0x0B, 0x13, 0x00, 0x13 },
+		.c22 = { 0xEB, 0x32, 0x32, 0xFA, 0x83 },
+		.c23 = { 0xEC, 0x01, 0x0F, 0x0A, 0x2D, 0x2D, 0x00, 0x00, 0x00, 0x00 },
+		.c24 = { 0xED, 0x08, 0x06, 0x00, 0x00 },
+		.c25 = { 0xEE, 0x00 },
+		.c26 = { 0xEF, 0x11, 0x00 },
+		.c27 = { 0xF0, 0x40 },
+		.c28 = { 0xF1, 0x06, 0x04, 0x06, 0x03 },
+		.c29 = { 0xF2, 0x0A, 0x06, 0x14, 0x3C },
+		.c30 = { 0xF3, 0x5F },
+		.c31 = { 0xF4, 0x7D, 0xB9, 0x2D, 0x3A },
+		.c32 = { 0xF6, 0x00, 0x00, 0x1D, 0x76, 0x0A },
+		.c33 = { 0xF7, 0x50, 0x64, 0x64, 0x0F, 0x40 },
+		.c34 = { 0x35, 0x02, 0x01 },
+		.c35 = { 0x36, 0x0F, 0x53, 0x01 },
+		.c36 = { 0x37, 0xFF, 0x08, 0xFF, 0x08 },
+		.c37 = { 0x39, 0x03 },
+		.c38 = { 0x3A, 0x00 },
+		.c39 = { 0x50, 0xAB },
+		.c40 = { 0x6E, 0x04 },
+		.c41 = { 0x76, 0x01, 0x3F },
+		.c42 = { 0x78, 0x03 },
+		.c43 = { 0x7A, 0x00, 0x18, 0x0D },
+		.c44 = { 0x8B, 0x00, 0x00 },
+		.c45 = { 0x8C, 0x30, 0x10, 0x10, 0x10, 0x0C, 0x08, 0x0C, 0x32, 0x24, 0x80,
+			 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+		.c46 = { 0x8D, 0xA0, 0x5A, 0x14, 0x0A, 0x32, 0x0A, 0x00, 0x00, 0x00, 0x00,
+			 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+		.c47 = { 0xC2, 0x11, 0x00, 0x00, 0x00 },
+		.c48 = { 0xCB, 0x01, 0xF5, 0xFF, 0xFF, 0x01, 0x00, 0x05, 0x00, 0x05, 0x00 },
+		.c49 = { 0xD4, 0x01, 0x04, 0x07 },
+		.c50 = { 0xDD, 0x05, 0x02 },
+		.checksum = { 0xAC, 0x5E, 0x4C },
+	},
+};
+
+#define CC(pa) do { \
+	i2c_api->i2c_himax_master_write(client, pa , sizeof(pa), normalRetry); \
+} while (0)
+
+struct himax_i2c_platform_data himax_ts_data = {
+	.slave_addr = 0x90,
+	.abs_x_min = 0,
+	.abs_x_max = 1024,
+	.abs_y_min = 0,
+	.abs_y_max = 950,
+	.abs_pressure_min = 0,
+	.abs_pressure_max = 200,
+	.abs_width_min = 0,
+	.abs_width_max = 200,
+	.gpio_irq = PRIMOU_GPIO_TP_ATT_N,
+	.version = 0x00,
+	.tw_id = 0,
+	.event_htc_enable = 0,
+	.cable_config = { 0x90, 0x00},
+	.powerOff3V3 = 0,
+	.power = primou_ts_power,
+	.protocol_type = PROTOCOL_TYPE_B,
+	.screenWidth = 480,
+	.screenHeight = 800,
+	.loadSensorConfig = himax_ts_loadSensorConfig,
+	.reset = himax_ts_reset,
+	.type1 = 0,
+	.type1_size = 0,
+	.type2 = 0,
+	.type2_size = 0,
+	.type3 = config_type3,
+	.type3_size = sizeof(config_type3),
+};
+
+static int himax_ts_loadSensorConfig(struct i2c_client *client, struct himax_i2c_platform_data *pdata, struct himax_config_init_api *i2c_api)
+{
+	uint8_t act_len;
+	int result;
+	char Data = 0;
+	char cmd[3] = {0};
+	int retryTimes = 0, i = 0;
+	const int firstRetry = 3;
+	const int normalRetry = 10;
+	uint8_t tw_id = 0;
+	uint8_t fw_ver = 0;
+	struct himax_i2c_platform_data_config_type_1 *type1_selected = 0;
+	struct himax_i2c_platform_data_config_type_2 *type2_selected = 0;
+	struct himax_i2c_platform_data_config_type_3 *type3_selected = 0;
+	uint8_t *type1_checksum = 0;
+	uint8_t *type2_checksum = 0;
+	uint8_t *type3_checksum = 0;
+
+start:
+	if (!pdata || !client || !i2c_api) {
+		printk(KERN_ERR "[TP][TOUCH_ERR]%s: Necessary parameters are null!\n", __func__);
+		return -1;
+	}
+	result = i2c_api->i2c_himax_write_command(client, 0x81, firstRetry);
+	if (result < 0) {
+		printk(KERN_INFO "[TP]No Himax chip inside\n");
+		return -EIO;
+	} else {
+		hr_msleep(150);
+
+		cmd[0] = 0x36;
+		cmd[1] = 0x0F;
+		cmd[2] = 0x53;
+		i2c_api->i2c_himax_master_write(client, cmd , sizeof(cmd), normalRetry);
+		cmd[0] = 0xDD;
+		cmd[1] = 0x04;
+		cmd[2] = 0x02;
+		i2c_api->i2c_himax_master_write(client, cmd , sizeof(cmd), normalRetry);
+		i2c_api->i2c_himax_write_command(client, 0x83, normalRetry);
+		hr_msleep(100);
+		i2c_api->i2c_himax_write_command(client, 0x82, normalRetry);
+		i2c_api->i2c_himax_write_command(client, 0xF5, normalRetry);
+		i2c_api->i2c_himax_read_command(client, 1, &tw_id, &act_len, normalRetry);
+		i2c_api->i2c_himax_write_command(client, 0x32, normalRetry);
+		i2c_api->i2c_himax_read_command(client, 1, &fw_ver, &act_len, normalRetry);
+
+		if (pdata->type3) {
+			for (i = 0; i < pdata->type3_size/sizeof(struct himax_i2c_platform_data_config_type_3); ++i) {
+				if (fw_ver >= (pdata->type3)[i].version && tw_id == (pdata->type3)[i].tw_id) {
+					type3_selected = &((pdata->type3)[i]);
+					pdata->version = (pdata->type3)[i].version;
+					pdata->tw_id = (pdata->type3)[i].tw_id;
+					pdata->regCD = (pdata->type3)[i].c50;
+					if (*((pdata->type3[i]).checksum))
+						type3_checksum = (pdata->type3)[i].checksum;
+					printk(KERN_INFO "[TP]type3 selected, %X, %X\n", (uint32_t)type3_selected, (uint32_t)type3_checksum);
+				}
+			}
+		}
+
+		if (pdata->type2 && !type3_selected) {
+			for (i = 0; i < pdata->type2_size/sizeof(struct himax_i2c_platform_data_config_type_2); ++i) {
+				if (fw_ver >= (pdata->type2)[i].version && tw_id == (pdata->type2)[i].tw_id) {
+					type2_selected = &((pdata->type2)[i]);
+					pdata->version = (pdata->type2[i]).version;
+					pdata->tw_id = (pdata->type2[i]).tw_id;
+					if (*((pdata->type2[i]).checksum))
+						type2_checksum = (pdata->type2[i]).checksum;
+					printk(KERN_INFO "[TP]type2 selected, %X, %X\n", (uint32_t)type2_selected, (uint32_t)type2_checksum);
+				}
+			}
+		}
+
+		if (pdata->type1 && !type2_selected && !type3_selected) {
+			for (i = 0; i < pdata->type1_size/sizeof(struct himax_i2c_platform_data_config_type_1); ++i) {
+				if (fw_ver >= (pdata->type1[i]).version && tw_id == (pdata->type1[i]).tw_id) {
+					type1_selected = &((pdata->type1)[i]);
+					pdata->version = (pdata->type1[i]).version;
+					pdata->tw_id = (pdata->type1[i]).tw_id;
+					if (*((pdata->type1[i]).checksum))
+						type1_checksum = (pdata->type1[i]).checksum;
+					printk(KERN_INFO "[TP]type1 selected, %X, %X\n", (uint32_t)type1_selected, (uint32_t)type1_checksum);
+				}
+			}
+		}
+		switch (tw_id & 0x03) {
+		case 0x00:/* Panasonic */
+			printk(KERN_INFO "[TP]%s: Panasonic touch window detected.\n", __func__);
+			break;
+		case 0x01:/* nissha */
+			printk(KERN_INFO "[TP]%s: Nissha touch window detected.\n", __func__);
+			break;
+		}
+		if (!type1_selected && !type2_selected && !type3_selected) {
+			printk(KERN_ERR "[TP][TOUCH_ERR]%s: Couldn't find the matched profile!\n", __func__);
+			return -1;
+		}
+
+		printk(KERN_INFO "[TP]%s: start initializing Sensor configs\n", __func__);
+	}
+
+	do {
+		if (retryTimes == 5) {
+			pdata->reset();
+			hr_msleep(50);
+			++retryTimes;
+			goto start;
+		} else if (retryTimes == 11) {
+			printk(KERN_ERR "[TP][TOUCH_ERR]%s: Himax configuration checksum error!\n", __func__);
+			return -EIO;
+		}
+
+		if (type1_checksum || type2_checksum || type3_checksum) {
+			/* Reset Check Sum */
+			cmd[0] = 0xAB; cmd[1] = 0x00;
+			i2c_api->i2c_himax_master_write(client, cmd , 2, normalRetry);
+			/* Start Check Sum */
+			cmd[1] = 0x01;
+			i2c_api->i2c_himax_master_write(client, cmd , 2, normalRetry);
+		}
+
+		if (type3_selected) {
+			CC(type3_selected->c1); CC(type3_selected->c2); CC(type3_selected->c3); CC(type3_selected->c4);
+			CC(type3_selected->c5); CC(type3_selected->c6); CC(type3_selected->c7); CC(type3_selected->c8);
+			CC(type3_selected->c9); CC(type3_selected->c10); CC(type3_selected->c11); CC(type3_selected->c12);
+			CC(type3_selected->c13); CC(type3_selected->c14); CC(type3_selected->c15); CC(type3_selected->c16);
+			CC(type3_selected->c17); CC(type3_selected->c18); CC(type3_selected->c19); CC(type3_selected->c20);
+			CC(type3_selected->c21); CC(type3_selected->c22); CC(type3_selected->c23); CC(type3_selected->c24);
+			CC(type3_selected->c25); CC(type3_selected->c26); CC(type3_selected->c27); CC(type3_selected->c28);
+			CC(type3_selected->c29); CC(type3_selected->c30); CC(type3_selected->c31); CC(type3_selected->c32);
+			CC(type3_selected->c33); CC(type3_selected->c34); CC(type3_selected->c35); CC(type3_selected->c36);
+			CC(type3_selected->c37); CC(type3_selected->c38); CC(type3_selected->c39); CC(type3_selected->c40);
+			CC(type3_selected->c41); CC(type3_selected->c42); CC(type3_selected->c43); CC(type3_selected->c44);
+			CC(type3_selected->c45); CC(type3_selected->c46); CC(type3_selected->c47); CC(type3_selected->c48);
+			CC(type3_selected->c49); CC(type3_selected->c50);
+		} else if (type2_selected) {
+			CC(type2_selected->c1); CC(type2_selected->c2); CC(type2_selected->c3); CC(type2_selected->c4);
+			CC(type2_selected->c5); CC(type2_selected->c6); CC(type2_selected->c7); CC(type2_selected->c8);
+			CC(type2_selected->c9); CC(type2_selected->c10); CC(type2_selected->c11); CC(type2_selected->c12);
+			CC(type2_selected->c13); CC(type2_selected->c14); CC(type2_selected->c15); CC(type2_selected->c16);
+			CC(type2_selected->c17); CC(type2_selected->c18); CC(type2_selected->c19); CC(type2_selected->c20);
+			CC(type2_selected->c21); CC(type2_selected->c22); CC(type2_selected->c23); CC(type2_selected->c24);
+			CC(type2_selected->c25); CC(type2_selected->c26); CC(type2_selected->c27); CC(type2_selected->c28);
+			CC(type2_selected->c29); CC(type2_selected->c30); CC(type2_selected->c31); CC(type2_selected->c32);
+			CC(type2_selected->c33); CC(type2_selected->c34); CC(type2_selected->c35); CC(type2_selected->c36);
+			CC(type2_selected->c37); CC(type2_selected->c38); CC(type2_selected->c39); CC(type2_selected->c40);
+			CC(type2_selected->c41); CC(type2_selected->c42); CC(type2_selected->c43); CC(type2_selected->c44);
+			CC(type2_selected->c45);
+		} else {
+		}
+
+		if (type1_checksum || type2_checksum || type3_checksum) {
+		/* Stop Check Sum */
+			cmd[0] = 0xAB; cmd[1] = 0x10;
+			i2c_api->i2c_himax_master_write(client, cmd , 2, normalRetry);
+
+			/* Enter Golden Pattern */
+			if (type1_checksum) {
+				printk(KERN_INFO "[TP]Check type 1 checksum.\n");
+				i2c_api->i2c_himax_master_write(client, type1_selected->checksum, sizeof(type1_selected->checksum), normalRetry);
+			} else if (type2_checksum) {
+				printk(KERN_INFO "[TP]Check type 2 checksum.\n");
+				i2c_api->i2c_himax_master_write(client, type2_selected->checksum, sizeof(type2_selected->checksum), normalRetry);
+			} else if (type3_checksum) {
+				printk(KERN_INFO "[TP]Check type 3 checksum.\n");
+				i2c_api->i2c_himax_master_write(client, type3_selected->checksum, sizeof(type3_selected->checksum), normalRetry);
+			}
+
+			/* Read Hardware Check Sum */
+			i2c_api->i2c_himax_write_command(client, 0xAB, normalRetry);
+			i2c_api->i2c_himax_read_command(client, 1, &Data, &act_len, normalRetry);
+		}
+
+		++retryTimes;
+	/* Check Software and Hardware Check Sum */
+	} while (Data != 0x10 && ((uint32_t)type1_checksum ^ (uint32_t)type2_checksum ^ (uint32_t)type3_checksum));
+
+	/* Turn on reload disable */
+	cmd[0] = 0x42; cmd[1] = 0x02;
+	i2c_api->i2c_himax_master_write(client, cmd , 2, normalRetry);
+
+	i2c_api->i2c_himax_write_command(client, 0x83, normalRetry);
+	hr_msleep(100);
+
+	return result;
+}
+
+static ssize_t primou_himax_virtual_keys_show(struct kobject *kobj,
+			struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf,
+		__stringify(EV_KEY) ":" __stringify(KEY_BACK)	":59:849:80:50"
+		":" __stringify(EV_KEY) ":" __stringify(KEY_HOME)	":240:849:90:50"
+		":" __stringify(EV_KEY) ":" __stringify(KEY_APP_SWITCH)	":421:849:90:50"
+		"\n");
+}
+
+static ssize_t primou_himax_virtual_keys_show_china_mfg(struct kobject *kobj,
+			struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf,
+		__stringify(EV_KEY) ":" __stringify(KEY_BACK)	":65:849:80:50"
+		":" __stringify(EV_KEY) ":" __stringify(KEY_HOME)	":180:849:83:50"
+		":" __stringify(EV_KEY) ":" __stringify(KEY_APP_SWITCH)	":310:849:88:50"
+		":" __stringify(EV_KEY) ":" __stringify(KEY_MENU)	":445:849:91:50"
+		"\n");
+}
+
+static ssize_t primou_himax_virtual_keys_show_china(struct kobject *kobj,
+			struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf,
+		__stringify(EV_KEY) ":" __stringify(KEY_BACK)	":65:849:80:50"
+		":" __stringify(EV_KEY) ":" __stringify(KEY_HOME)	":180:849:83:50"
+		":" __stringify(EV_KEY) ":" __stringify(KEY_APP_SWITCH)	":310:849:88:50"
+		":" __stringify(EV_KEY) ":" __stringify(KEY_WEIBO)	":445:849:91:50"
+		"\n");
+}
+
+static ssize_t primou_atmel_virtual_keys_show(struct kobject *kobj,
+			struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf,
+		__stringify(EV_KEY) ":" __stringify(KEY_HOME)	":65:845:80:50"
+		":" __stringify(EV_KEY) ":" __stringify(KEY_MENU)	":180:845:83:50"
+		":" __stringify(EV_KEY) ":" __stringify(KEY_BACK)	":310:845:88:50"
+		":" __stringify(EV_KEY) ":" __stringify(KEY_SEARCH) ":445:845:91:50"
+		"\n");
+}
+
 static ssize_t primou_synaptics_virtual_keys_show(struct kobject *kobj,
 			struct kobj_attribute *attr, char *buf)
 {
@@ -398,6 +1061,22 @@ static ssize_t primou_synaptics_virtual_keys_show_china(struct kobject *kobj,
 		"\n");
 }
 
+static struct kobj_attribute primou_himax_virtual_keys_attr = {
+	.attr = {
+		.name = "virtualkeys.himax-touchscreen",
+		.mode = S_IRUGO,
+	},
+	.show = &primou_himax_virtual_keys_show,
+};
+
+static struct kobj_attribute primou_atmel_virtual_keys_attr = {
+	.attr = {
+		.name = "virtualkeys.atmel-touchscreen",
+		.mode = S_IRUGO,
+	},
+	.show = &primou_atmel_virtual_keys_show,
+};
+
 static struct kobj_attribute primou_synaptics_virtual_keys_attr = {
 	.attr = {
 		.name = "virtualkeys.synaptics-rmi-touchscreen",
@@ -407,7 +1086,9 @@ static struct kobj_attribute primou_synaptics_virtual_keys_attr = {
 };
 
 static struct attribute *primou_properties_attrs[] = {
+	&primou_atmel_virtual_keys_attr.attr,
 	&primou_synaptics_virtual_keys_attr.attr,
+	&primou_himax_virtual_keys_attr.attr,
 	NULL
 };
 
@@ -494,9 +1175,19 @@ static struct cm3629_platform_data cm36282_pdata = {
 
 static struct i2c_board_info i2c_devices[] = {
 	{
+		I2C_BOARD_INFO(ATMEL_MXT224E_NAME, 0x94 >> 1),
+		.platform_data = &primou_ts_atmel_data,
+		.irq = MSM_GPIO_TO_INT(PRIMOU_GPIO_TP_ATT_N)
+	},
+	{
 		I2C_BOARD_INFO(SYNAPTICS_3200_NAME, 0x40 >> 1),
 		.platform_data = &primou_ts_synaptics_data,
 		.irq = MSM_GPIO_TO_INT(PRIMOU_GPIO_TP_ATT_N)
+	},
+	{
+		I2C_BOARD_INFO(HIMAX8526A_NAME, 0x90>>1),
+		.platform_data  = &himax_ts_data,
+		.irq = MSM_GPIO_TO_INT(PRIMOU_GPIO_TP_ATT_N),
 	},
 	{
 		I2C_BOARD_INFO(CM3629_I2C_NAME, 0xC0 >> 1),
@@ -611,6 +1302,9 @@ static int pm8058_gpios_init(void)
 	}
 
 #ifdef CONFIG_MMC_MSM_CARD_HW_DETECTION
+	if (machine_is_msm7x30_fluid())
+		sdcc_det.config.inv_int_pol = 1;
+
 	rc = pm8xxx_gpio_config(sdcc_det.gpio, &sdcc_det.config);
 	if (rc) {
 		pr_err("%s PRIMOU_GPIO_SDMC_CD_N config failed\n", __func__);
@@ -622,7 +1316,6 @@ static int pm8058_gpios_init(void)
 	pm8xxx_gpio_config(keypad_gpio.gpio, &keypad_gpio.config);
 	keypad_gpio.gpio = PRIMOU_VOL_DN;
 	pm8xxx_gpio_config(keypad_gpio.gpio, &keypad_gpio.config);
-
 	return 0;
 }
 /* Regulator API support */
@@ -726,14 +1419,236 @@ static int pm8058_pwm_enable(struct pwm_device *pwm, int ch, int on)
 	return rc;
 }
 
+static const unsigned int fluid_keymap[] = {
+	KEY(0, 0, KEY_7),
+	KEY(0, 1, KEY_ENTER),
+	KEY(0, 2, KEY_UP),
+	KEY(0, 4, KEY_DOWN),
+
+	KEY(1, 0, KEY_CAMERA_SNAPSHOT),
+	KEY(1, 1, KEY_SELECT),
+	KEY(1, 2, KEY_1),
+	KEY(1, 3, KEY_VOLUMEUP),
+	KEY(1, 4, KEY_VOLUMEDOWN),
+};
+
+static const unsigned int surf_keymap[] = {
+	KEY(0, 0, KEY_7),
+	KEY(0, 1, KEY_DOWN),
+	KEY(0, 2, KEY_UP),
+	KEY(0, 3, KEY_RIGHT),
+	KEY(0, 4, KEY_ENTER),
+	KEY(0, 5, KEY_L),
+	KEY(0, 6, KEY_BACK),
+	KEY(0, 7, KEY_M),
+
+	KEY(1, 0, KEY_LEFT),
+	KEY(1, 1, KEY_SEND),
+	KEY(1, 2, KEY_1),
+	KEY(1, 3, KEY_4),
+	KEY(1, 4, KEY_CLEAR),
+	KEY(1, 5, KEY_MSDOS),
+	KEY(1, 6, KEY_SPACE),
+	KEY(1, 7, KEY_COMMA),
+
+	KEY(2, 0, KEY_6),
+	KEY(2, 1, KEY_5),
+	KEY(2, 2, KEY_8),
+	KEY(2, 3, KEY_3),
+	KEY(2, 4, KEY_NUMERIC_STAR),
+	KEY(2, 5, KEY_UP),
+	KEY(2, 6, KEY_DOWN), /* SYN */
+	KEY(2, 7, KEY_LEFTSHIFT),
+
+	KEY(3, 0, KEY_9),
+	KEY(3, 1, KEY_NUMERIC_POUND),
+	KEY(3, 2, KEY_0),
+	KEY(3, 3, KEY_2),
+	KEY(3, 4, KEY_SLEEP),
+	KEY(3, 5, KEY_F1),
+	KEY(3, 6, KEY_F2),
+	KEY(3, 7, KEY_F3),
+
+	KEY(4, 0, KEY_BACK),
+	KEY(4, 1, KEY_HOME),
+	KEY(4, 2, KEY_MENU),
+	KEY(4, 3, KEY_VOLUMEUP),
+	KEY(4, 4, KEY_VOLUMEDOWN),
+	KEY(4, 5, KEY_F4),
+	KEY(4, 6, KEY_F5),
+	KEY(4, 7, KEY_F6),
+
+	KEY(5, 0, KEY_R),
+	KEY(5, 1, KEY_T),
+	KEY(5, 2, KEY_Y),
+	KEY(5, 3, KEY_LEFTALT),
+	KEY(5, 4, KEY_KPENTER),
+	KEY(5, 5, KEY_Q),
+	KEY(5, 6, KEY_W),
+	KEY(5, 7, KEY_E),
+
+	KEY(6, 0, KEY_F),
+	KEY(6, 1, KEY_G),
+	KEY(6, 2, KEY_H),
+	KEY(6, 3, KEY_CAPSLOCK),
+	KEY(6, 4, KEY_PAGEUP),
+	KEY(6, 5, KEY_A),
+	KEY(6, 6, KEY_S),
+	KEY(6, 7, KEY_D),
+
+	KEY(7, 0, KEY_V),
+	KEY(7, 1, KEY_B),
+	KEY(7, 2, KEY_N),
+	KEY(7, 3, KEY_MENU), /* REVISIT - SYM */
+	KEY(7, 4, KEY_PAGEDOWN),
+	KEY(7, 5, KEY_Z),
+	KEY(7, 6, KEY_X),
+	KEY(7, 7, KEY_C),
+
+	KEY(8, 0, KEY_P),
+	KEY(8, 1, KEY_J),
+	KEY(8, 2, KEY_K),
+	KEY(8, 3, KEY_INSERT),
+	KEY(8, 4, KEY_LINEFEED),
+	KEY(8, 5, KEY_U),
+	KEY(8, 6, KEY_I),
+	KEY(8, 7, KEY_O),
+
+	KEY(9, 0, KEY_4),
+	KEY(9, 1, KEY_5),
+	KEY(9, 2, KEY_6),
+	KEY(9, 3, KEY_7),
+	KEY(9, 4, KEY_8),
+	KEY(9, 5, KEY_1),
+	KEY(9, 6, KEY_2),
+	KEY(9, 7, KEY_3),
+
+	KEY(10, 0, KEY_F7),
+	KEY(10, 1, KEY_F8),
+	KEY(10, 2, KEY_F9),
+	KEY(10, 3, KEY_F10),
+	KEY(10, 4, KEY_FN),
+	KEY(10, 5, KEY_9),
+	KEY(10, 6, KEY_0),
+	KEY(10, 7, KEY_DOT),
+
+	KEY(11, 0, KEY_LEFTCTRL),
+	KEY(11, 1, KEY_F11),  /* START */
+	KEY(11, 2, KEY_ENTER),
+	KEY(11, 3, KEY_SEARCH),
+	KEY(11, 4, KEY_DELETE),
+	KEY(11, 5, KEY_RIGHT),
+	KEY(11, 6, KEY_LEFT),
+	KEY(11, 7, KEY_RIGHTSHIFT),
+};
+
+static struct matrix_keymap_data surf_keymap_data = {
+	.keymap_size    = ARRAY_SIZE(surf_keymap),
+	.keymap		= surf_keymap,
+};
+
+static struct pm8xxx_keypad_platform_data surf_keypad_data = {
+	.input_name		= "surf_keypad",
+	.input_phys_device	= "surf_keypad/input0",
+	.num_rows		= 12,
+	.num_cols		= 8,
+	.rows_gpio_start	= PM8058_GPIO_PM_TO_SYS(8),
+	.cols_gpio_start	= PM8058_GPIO_PM_TO_SYS(0),
+	.debounce_ms		= 15,
+	.scan_delay_ms		= 32,
+	.row_hold_ns		= 91500,
+	.wakeup			= 1,
+	.keymap_data		= &surf_keymap_data,
+};
+
+static struct matrix_keymap_data fluid_keymap_data = {
+	.keymap_size	= ARRAY_SIZE(fluid_keymap),
+	.keymap		= fluid_keymap,
+};
+
+
+
+static struct pm8xxx_keypad_platform_data fluid_keypad_data = {
+	.input_name		= "fluid-keypad",
+	.input_phys_device	= "fluid-keypad/input0",
+	.num_rows		= 5,
+	.num_cols		= 5,
+	.rows_gpio_start	= PM8058_GPIO_PM_TO_SYS(8),
+	.cols_gpio_start	= PM8058_GPIO_PM_TO_SYS(0),
+	.debounce_ms		= 15,
+	.scan_delay_ms		= 32,
+	.row_hold_ns		= 91500,
+	.wakeup			= 1,
+	.keymap_data		= &fluid_keymap_data,
+};
+
 static struct pm8xxx_vibrator_platform_data pm8058_vib_pdata = {
        .initial_vibrate_ms  = 0,
-       .level_mV = 2800,
+       .level_mV = 3000,
        .max_timeout_ms = 15000,
 };
 static struct pm8058_pwm_pdata pm8058_pwm_data = {
 	.config         = pm8058_pwm_config,
 	.enable         = pm8058_pwm_enable,
+};
+
+static struct pmic8058_led pmic8058_ffa_leds[] = {
+	[0] = {
+		.name		= "keyboard-backlight",
+		.max_brightness = 15,
+		.id		= PMIC8058_ID_LED_KB_LIGHT,
+	},
+};
+
+static struct pmic8058_leds_platform_data pm8058_ffa_leds_data = {
+	.num_leds = ARRAY_SIZE(pmic8058_ffa_leds),
+	.leds	= pmic8058_ffa_leds,
+};
+
+static struct pmic8058_led pmic8058_surf_leds[] = {
+	[0] = {
+		.name		= "keyboard-backlight",
+		.max_brightness = 15,
+		.id		= PMIC8058_ID_LED_KB_LIGHT,
+	},
+	[1] = {
+		.name		= "voice:red",
+		.max_brightness = 20,
+		.id		= PMIC8058_ID_LED_0,
+	},
+	[2] = {
+		.name		= "wlan:green",
+		.max_brightness = 20,
+		.id		= PMIC8058_ID_LED_2,
+	},
+};
+
+static struct pmic8058_leds_platform_data pm8058_surf_leds_data = {
+	.num_leds = ARRAY_SIZE(pmic8058_surf_leds),
+	.leds	= pmic8058_surf_leds,
+};
+
+static struct pmic8058_led pmic8058_fluid_leds[] = {
+	[0] = {
+		.name		= "keyboard-backlight",
+		.max_brightness = 15,
+		.id		= PMIC8058_ID_LED_KB_LIGHT,
+	},
+	[1] = {
+		.name		= "flash:led_0",
+		.max_brightness = 15,
+		.id		= PMIC8058_ID_FLASH_LED_0,
+	},
+	[2] = {
+		.name		= "flash:led_1",
+		.max_brightness = 15,
+		.id		= PMIC8058_ID_FLASH_LED_1,
+	},
+};
+
+static struct pmic8058_leds_platform_data pm8058_fluid_leds_data = {
+	.num_leds = ARRAY_SIZE(pmic8058_fluid_leds),
+	.leds	= pmic8058_fluid_leds,
 };
 
 static struct pm8xxx_irq_platform_data pm8xxx_irq_pdata = {
@@ -1063,16 +1978,6 @@ static struct camera_led_est msm_camera_sensor_s5k4e5yx_led_table[] = {
 		.min_step = 41,
 		.max_step = 48
 	},
-	/*
-		{
-		.enable = 0,
-		.led_state = FL_MODE_FLASH_LEVEL7,
-		.current_ma = 700,
-		.lumen_value = 700,
-		.min_step = 21,
-		.max_step = 22
-	},
-	*/
 		{
 		.enable = 1,
 		.led_state = FL_MODE_FLASH,
@@ -1159,7 +2064,6 @@ static struct camera_flash_cfg msm_camera_sensor_s5k4e5yx_flash_cfg = {
 	.low_cap_limit			= 15,
 	.flash_info             = &msm_camera_sensor_s5k4e5yx_flash_info,
 };
-//HTC_END
 #endif
 #ifdef CONFIG_S5K4E5YX
 static struct msm_camera_sensor_platform_info sensor_s5k4e5yx_board_info = {
@@ -1303,10 +2207,6 @@ static uint32_t rawchip_on_gpio_table[] = {
 	GPIO_CFG(PRIMOU_GPIO_RAW_INTR0, 0, GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA), /* RAW CHIP INT0 */
 	GPIO_CFG(PRIMOU_GPIO_RAW_INTR1, 0, GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA), /* RAW CHIP INT1 */
 	GPIO_CFG(PRIMOU_GPIO_MCAM_SPI_CS, 2 , GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_4MA),
-#if 0
-	GPIO_CFG(PRIMOU_GPIO_CAM1_VCM_PWD, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
-	GPIO_CFG(PRIMOU_GPIO_CAM1_PWD, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
-#endif
 	GPIO_CFG(PRIMOU_GPIO_CAM_MCLK, 1, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_8MA), /* MCLK */
 	GPIO_CFG(PRIMOU_GPIO_CAM_I2C_SCL, 2, GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_8MA), /* I2C SCL*/
 	GPIO_CFG(PRIMOU_GPIO_CAM_I2C_SDA, 2, GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_8MA), /* I2C SDA*/
@@ -1576,6 +2476,11 @@ static int __init buses_init(void)
 		pr_err("%s: gpio_tlmm_config (gpio=%d) failed\n",
 		       __func__, PMIC_GPIO_INT);
 
+	if (machine_is_msm8x60_fluid())
+		pm8058_7x30_data.keypad_pdata = &fluid_keypad_data;
+	else
+		pm8058_7x30_data.keypad_pdata = &surf_keypad_data;
+
 	return 0;
 }
 
@@ -1593,8 +2498,6 @@ enum version{
 	VER_UNSUPPORTED = 0xFF
 };
 
-
-/* static struct vreg *vreg_marimba_1; */
 static struct vreg *vreg_marimba_2;
 
 static struct msm_gpio timpani_reset_gpio_cfg[] = {
@@ -1666,6 +2569,26 @@ static void msm_timpani_shutdown_power(void)
 				   ARRAY_SIZE(timpani_reset_gpio_cfg));
 };
 
+static struct msm_gpio marimba_svlte_config_clock[] = {
+	{ GPIO_CFG(34, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
+		"MARIMBA_SVLTE_CLOCK_ENABLE" },
+};
+
+static unsigned int msm_marimba_gpio_config_svlte(int gpio_cfg_marimba)
+{
+	if (machine_is_msm8x55_svlte_surf() ||
+		machine_is_msm8x55_svlte_ffa()) {
+		if (gpio_cfg_marimba)
+			gpio_set_value(GPIO_PIN
+				(marimba_svlte_config_clock->gpio_cfg), 1);
+		else
+			gpio_set_value(GPIO_PIN
+				(marimba_svlte_config_clock->gpio_cfg), 0);
+	}
+
+	return 0;
+};
+
 static unsigned int msm_marimba_setup_power(void)
 {
 	int rc;
@@ -1675,6 +2598,26 @@ static unsigned int msm_marimba_setup_power(void)
 		printk(KERN_ERR "%s: vreg_enable() = %d \n",
 					__func__, rc);
 		goto out;
+	}
+
+	if (machine_is_msm8x55_svlte_surf() || machine_is_msm8x55_svlte_ffa()) {
+		rc = msm_gpios_request_enable(marimba_svlte_config_clock,
+				ARRAY_SIZE(marimba_svlte_config_clock));
+		if (rc < 0) {
+			printk(KERN_ERR
+				"%s: msm_gpios_request_enable failed (%d)\n",
+					__func__, rc);
+			return rc;
+		}
+
+		rc = gpio_direction_output(GPIO_PIN
+			(marimba_svlte_config_clock->gpio_cfg), 0);
+		if (rc < 0) {
+			printk(KERN_ERR
+				"%s: gpio_direction_output failed (%d)\n",
+					__func__, rc);
+			return rc;
+		}
 	}
 
 out:
@@ -1704,9 +2647,9 @@ static int bahama_present(void)
 
 	case TIMPANI_ID:
 	default:
-		printk(KERN_ERR "%s: unexpected adie connectivity type: %d\n",
+	printk(KERN_ERR "%s: unexpected adie connectivity type: %d\n",
 			__func__, id);
-		return -ENODEV;
+	return -ENODEV;
 	}
 }
 
@@ -1757,6 +2700,15 @@ static int fm_radio_setup(struct marimba_fm_platform_data *pdata)
 		printk(KERN_ERR "%s: clock vote failed (%d)\n",
 			__func__, rc);
 		goto fm_clock_vote_fail;
+	}
+	/*Request the Clock Using GPIO34/AP2MDM_MRMBCK_EN in case
+	of svlte*/
+	if (machine_is_msm8x55_svlte_surf() ||
+			machine_is_msm8x55_svlte_ffa())	{
+		rc = marimba_gpio_config(1);
+		if (rc < 0)
+			printk(KERN_ERR "%s: clock enable for svlte : %d\n",
+						__func__, rc);
 	}
 	irqcfg = GPIO_CFG(147, 0, GPIO_CFG_INPUT, GPIO_CFG_NO_PULL,
 					GPIO_CFG_2MA);
@@ -1811,6 +2763,17 @@ static void fm_radio_shutdown(struct marimba_fm_platform_data *pdata)
 	if (rc < 0)
 		printk(KERN_ERR "%s: clock_vote return val: %d\n",
 						__func__, rc);
+
+	/*Disable the Clock Using GPIO34/AP2MDM_MRMBCK_EN in case
+	of svlte*/
+	if (machine_is_msm8x55_svlte_surf() ||
+			machine_is_msm8x55_svlte_ffa())	{
+		rc = marimba_gpio_config(0);
+		if (rc < 0)
+			printk(KERN_ERR "%s: clock disable for svlte : %d\n",
+						__func__, rc);
+	}
+
 
 	if (!bahama_not_marimba)	{
 		rc = pmapp_vreg_level_vote(id, PMAPP_VREG_S2, 0);
@@ -2120,6 +3083,7 @@ static struct marimba_platform_data marimba_pdata = {
 	.slave_id[SLAVE_ID_BAHAMA_QMEMBIST]  = BAHAMA_SLAVE_ID_QMEMBIST_ADDR,
 	.marimba_setup = msm_marimba_setup_power,
 	.marimba_shutdown = msm_marimba_shutdown_power,
+	.marimba_gpio_config = msm_marimba_gpio_config_svlte,
 	.fm = &marimba_fm_pdata,
 	.codec = &mariba_codec_pdata,
 	.tsadc_ssbi_adap = MARIMBA_SSBI_ADAP,
@@ -2468,6 +3432,80 @@ static struct platform_device android_usb_device = {
 };
 
 #endif
+#ifdef CONFIG_BOSCH_BMA150
+static struct vreg *vreg_gp6;
+static int sensors_ldo_enable(void)
+{
+	int rc;
+
+	/*
+	 * Enable the VREGs L8(gp7), L15(gp6)
+	 * for I2C communication with sensors.
+	 */
+	pr_info("sensors_ldo_enable called!!\n");
+	vreg_gp7 = vreg_get(NULL, "gp7");
+	if (IS_ERR(vreg_gp7)) {
+		pr_err("%s: vreg_get gp7 failed\n", __func__);
+		rc = PTR_ERR(vreg_gp7);
+		goto fail_gp7_get;
+	}
+
+	rc = vreg_set_level(vreg_gp7, 1800);
+	if (rc) {
+		pr_err("%s: vreg_set_level gp7 failed\n", __func__);
+		goto fail_gp7_level;
+	}
+
+	rc = vreg_enable(vreg_gp7);
+	if (rc) {
+		pr_err("%s: vreg_enable gp7 failed\n", __func__);
+		goto fail_gp7_level;
+	}
+
+	vreg_gp6 = vreg_get(NULL, "gp6");
+	if (IS_ERR(vreg_gp6)) {
+		pr_err("%s: vreg_get gp6 failed\n", __func__);
+		rc = PTR_ERR(vreg_gp6);
+		goto fail_gp6_get;
+	}
+
+	rc = vreg_set_level(vreg_gp6, 3050);
+	if (rc) {
+		pr_err("%s: vreg_set_level gp6 failed\n", __func__);
+		goto fail_gp6_level;
+	}
+
+	rc = vreg_enable(vreg_gp6);
+	if (rc) {
+		pr_err("%s: vreg_enable gp6 failed\n", __func__);
+		goto fail_gp6_level;
+	}
+
+	return 0;
+
+fail_gp6_level:
+	vreg_put(vreg_gp6);
+fail_gp6_get:
+	vreg_disable(vreg_gp7);
+fail_gp7_level:
+	vreg_put(vreg_gp7);
+fail_gp7_get:
+	return rc;
+}
+
+static void sensors_ldo_disable(void)
+{
+	pr_info("sensors_ldo_disable called!!\n");
+	vreg_disable(vreg_gp6);
+	vreg_put(vreg_gp6);
+	vreg_disable(vreg_gp7);
+	vreg_put(vreg_gp7);
+}
+static struct bma150_platform_data bma150_data = {
+	.power_on = sensors_ldo_enable,
+	.power_off = sensors_ldo_disable,
+};
+#endif
 
 static struct bma250_platform_data gsensor_bma250_platform_data = {
 	.intr = PRIMOU_GPIO_GSENSOR_INT,
@@ -2530,6 +3568,7 @@ static struct msm_pm_platform_data msm_pm_data[MSM_PM_SLEEP_MODE_NR] = {
 		.latency = 8594,
 		.residency = 23740,
 	},
+
 	[MSM_PM_SLEEP_MODE_POWER_COLLAPSE_STANDALONE] = {
 #ifdef CONFIG_MSM_STANDALONE_POWER_COLLAPSE
 		.idle_supported = 1,
@@ -2661,10 +3700,125 @@ static void __init msm_qsd_spi_init(void)
 	qsd_device_spi.dev.platform_data = &qsd_spi_pdata;
 }
 
+#ifdef CONFIG_USB_EHCI_MSM_72K
+static void msm_hsusb_vbus_power(unsigned phy_info, int on)
+{
+	int rc;
+	static int vbus_is_on;
+	struct pm8xxx_gpio_init_info usb_vbus = {
+		PM8058_GPIO_PM_TO_SYS(36),
+		{
+			.direction      = PM_GPIO_DIR_OUT,
+			.pull           = PM_GPIO_PULL_NO,
+			.output_buffer  = PM_GPIO_OUT_BUF_CMOS,
+			.output_value   = 1,
+			.vin_sel        = 2,
+			.out_strength   = PM_GPIO_STRENGTH_MED,
+			.function       = PM_GPIO_FUNC_NORMAL,
+			.inv_int_pol    = 0,
+		},
+	};
+
+	/* If VBUS is already on (or off), do nothing. */
+	if (unlikely(on == vbus_is_on))
+		return;
+
+	if (on) {
+		rc = pm8xxx_gpio_config(usb_vbus.gpio, &usb_vbus.config);
+		if (rc) {
+			pr_err("%s PMIC GPIO 36 write failed\n", __func__);
+			return;
+		}
+	} else {
+		gpio_set_value_cansleep(PM8058_GPIO_PM_TO_SYS(36), 0);
+	}
+
+	vbus_is_on = on;
+}
+
+static struct msm_usb_host_platform_data msm_usb_host_pdata = {
+		.phy_info   = (USB_PHY_INTEGRATED | USB_PHY_MODEL_45NM),
+		.vbus_power = msm_hsusb_vbus_power,
+		.power_budget   = 180,
+};
+#endif
+
+#ifdef CONFIG_USB_MSM_OTG_72K
+static int hsusb_rpc_connect(int connect)
+{
+	if (connect)
+		return msm_hsusb_rpc_connect();
+	else
+		return msm_hsusb_rpc_close();
+}
+#endif
+
+#ifdef CONFIG_USB_MSM_OTG_72K
+static struct vreg *vreg_3p3;
+static int msm_hsusb_ldo_init(int init)
+{
+	uint32_t version = 0;
+	int def_vol = 3400;
+
+	version = socinfo_get_version();
+
+	if (SOCINFO_VERSION_MAJOR(version) >= 2 &&
+			SOCINFO_VERSION_MINOR(version) >= 1) {
+		def_vol = 3075;
+		pr_debug("%s: default voltage:%d\n", __func__, def_vol);
+	}
+
+	if (init) {
+		vreg_3p3 = vreg_get(NULL, "usb");
+		if (IS_ERR(vreg_3p3))
+			return PTR_ERR(vreg_3p3);
+		vreg_set_level(vreg_3p3, def_vol);
+	} else
+		vreg_put(vreg_3p3);
+
+	return 0;
+}
+
+static int msm_hsusb_ldo_enable(int enable)
+{
+	static int ldo_status;
+
+	if (!vreg_3p3 || IS_ERR(vreg_3p3))
+		return -ENODEV;
+
+	if (ldo_status == enable)
+		return 0;
+
+	ldo_status = enable;
+
+	if (enable)
+		return vreg_enable(vreg_3p3);
+
+	return vreg_disable(vreg_3p3);
+}
+
+static int msm_hsusb_ldo_set_voltage(int mV)
+{
+	static int cur_voltage = 3400;
+
+	if (!vreg_3p3 || IS_ERR(vreg_3p3))
+		return -ENODEV;
+
+	if (cur_voltage == mV)
+		return 0;
+
+	cur_voltage = mV;
+
+	pr_debug("%s: (%d)\n", __func__, mV);
+
+	return vreg_set_level(vreg_3p3, mV);
+}
+#endif
+
 static int phy_init_seq[] = { 0x06, 0x36, 0x0C, 0x31, 0x31, 0x32, 0x1, 0x0D, 0x1, 0x10, -1 };
 static struct msm_otg_platform_data msm_otg_pdata = {
 	.phy_init_seq		= phy_init_seq,
-	.mode			= USB_OTG,
+	.mode			= USB_PERIPHERAL,
 	.otg_control		= OTG_PMIC_CONTROL,
 	.power_budget		= 750,
 	.phy_type = CI_45NM_INTEGRATED_PHY,
@@ -2682,6 +3836,114 @@ static struct platform_device android_pmem_device = {
 	.id = 0,
 	.dev = { .platform_data = &android_pmem_pdata },
 };
+
+#if defined(CONFIG_FB_MSM_HDMI_ADV7520_PANEL) || defined(CONFIG_BOSCH_BMA150)
+/* there is an i2c address conflict between adv7520 and bma150 sensor after
+ * power up on fluid. As a solution, the default address of adv7520's packet
+ * memory is changed as soon as possible
+ */
+static int __init fluid_i2c_address_fixup(void)
+{
+	unsigned char wBuff[16];
+	unsigned char rBuff[16];
+	struct i2c_msg msgs[3];
+	int res;
+	int rc = -EINVAL;
+	struct vreg *vreg_ldo8;
+	struct i2c_adapter *adapter;
+
+	if (machine_is_msm7x30_fluid()) {
+		adapter = i2c_get_adapter(0);
+		if (!adapter) {
+			pr_err("%s: invalid i2c adapter\n", __func__);
+			return PTR_ERR(adapter);
+		}
+
+		/* turn on LDO8 */
+		vreg_ldo8 = vreg_get(NULL, "gp7");
+		if (!vreg_ldo8) {
+			pr_err("%s: VREG L8 get failed\n", __func__);
+			goto adapter_put;
+		}
+
+		rc = vreg_set_level(vreg_ldo8, 1800);
+		if (rc) {
+			pr_err("%s: VREG L8 set failed\n", __func__);
+			goto ldo8_put;
+		}
+
+		rc = vreg_enable(vreg_ldo8);
+		if (rc) {
+			pr_err("%s: VREG L8 enable failed\n", __func__);
+			goto ldo8_put;
+		}
+
+		/* change packet memory address to 0x74 */
+		wBuff[0] = 0x45;
+		wBuff[1] = 0x74;
+
+		msgs[0].addr = ADV7520_I2C_ADDR;
+		msgs[0].flags = 0;
+		msgs[0].buf = (unsigned char *) wBuff;
+		msgs[0].len = 2;
+
+		res = i2c_transfer(adapter, msgs, 1);
+		if (res != 1) {
+			pr_err("%s: error writing adv7520\n", __func__);
+			goto ldo8_disable;
+		}
+
+		/* powerdown adv7520 using bit 6 */
+		/* i2c read first */
+		wBuff[0] = 0x41;
+
+		msgs[0].addr = ADV7520_I2C_ADDR;
+		msgs[0].flags = 0;
+		msgs[0].buf = (unsigned char *) wBuff;
+		msgs[0].len = 1;
+
+		msgs[1].addr = ADV7520_I2C_ADDR;
+		msgs[1].flags = I2C_M_RD;
+		msgs[1].buf = rBuff;
+		msgs[1].len = 1;
+		res = i2c_transfer(adapter, msgs, 2);
+		if (res != 2) {
+			pr_err("%s: error reading adv7520\n", __func__);
+			goto ldo8_disable;
+		}
+
+		/* i2c write back */
+		wBuff[0] = 0x41;
+		wBuff[1] = rBuff[0] | 0x40;
+
+		msgs[0].addr = ADV7520_I2C_ADDR;
+		msgs[0].flags = 0;
+		msgs[0].buf = (unsigned char *) wBuff;
+		msgs[0].len = 2;
+
+		res = i2c_transfer(adapter, msgs, 1);
+		if (res != 1) {
+			pr_err("%s: error writing adv7520\n", __func__);
+			goto ldo8_disable;
+		}
+
+		/* for successful fixup, we release the i2c adapter */
+		/* but leave ldo8 on so that the adv7520 is not repowered */
+		i2c_put_adapter(adapter);
+		pr_info("%s: fluid i2c address conflict resolved\n", __func__);
+	}
+	return 0;
+
+ldo8_disable:
+	vreg_disable(vreg_ldo8);
+ldo8_put:
+	vreg_put(vreg_ldo8);
+adapter_put:
+	i2c_put_adapter(adapter);
+	return rc;
+}
+fs_initcall_sync(fluid_i2c_address_fixup);
+#endif
 
 static struct resource msm_fb_resources[] = {
 	{
@@ -2882,7 +4144,13 @@ static int __init check_dq_setup(char *str)
 __setup("androidboot.dq=", check_dq_setup);
 #endif
 
-static char *msm_adc_device_names[] = {
+static char *msm_adc_fluid_device_names[] = {
+	"LTC_ADC1",
+	"LTC_ADC2",
+	"LTC_ADC3",
+};
+
+static char *msm_adc_surf_device_names[] = {
 	"XO_ADC",
 };
 
@@ -2978,21 +4246,6 @@ struct platform_device msm_device_sdio_al = {
 };
 #endif /* CONFIG_MSM_SDIO_AL */
 
-static struct resource ram_console_resources[] = {
-	{
-		.start  = MSM_RAM_CONSOLE_BASE,
-		.end    = MSM_RAM_CONSOLE_BASE + MSM_RAM_CONSOLE_SIZE - 1,
-		.flags  = IORESOURCE_MEM,
-	},
-};
-
-static struct platform_device ram_console_device = {
-	.name           = "ram_console",
-	.id             = -1,
-	.num_resources  = ARRAY_SIZE(ram_console_resources),
-	.resource       = ram_console_resources,
-};
-
 /* HEADSET DRIVER BEGIN */
 
 #define HEADSET_DETECT		PRIMOU_GPIO_35MM_HEADSET_DET
@@ -3022,7 +4275,7 @@ static struct htc_headset_pmic_platform_data htc_headset_pmic_data = {
 	.key_irq		= 0,
 	.key_enable_gpio	= 0,
 	.adc_mic		= 14894,
-	.adc_remote		= {0, 3441, 3442, 5855, 5856, 12600},
+	.adc_remote		= {0, 1714, 1715, 5630, 5631, 12048},
 	.hs_controller		= 0,
 	.hs_switch		= 0,
 };
@@ -3051,16 +4304,16 @@ static struct headset_adc_config htc_headset_mgr_config[] = {
 	{
 		.type = HEADSET_BEATS,
 		.adc_max = 45531,
-		.adc_min = 33396,
+		.adc_min = 32541,
 	},
 	{
 		.type = HEADSET_BEATS_SOLO,
-		.adc_max = 33395,
-		.adc_min = 23466,
+		.adc_max = 32540,
+		.adc_min = 20089,
 	},
 	{
 		.type = HEADSET_NO_MIC, /* HEADSET_INDICATOR */
-		.adc_max = 23465,
+		.adc_max = 20088,
 		.adc_min = 9045,
 	},
 	{
@@ -3168,56 +4421,6 @@ static struct platform_device pm8058_leds = {
         },
 };
 
-static struct pm8058_led_config pm_led_config_CH[] = {
-        {
-                .name = "amber",
-                .type = PM8058_LED_DRVX,
-                .bank = 4,
-                .flags = PM8058_LED_BLINK_EN,
-                .out_current = 25,
-        },
-        {
-                .name = "green",
-                .type = PM8058_LED_DRVX,
-                .bank = 5,
-                .flags = PM8058_LED_BLINK_EN,
-                .out_current = 35,
-        },
-        {
-                .name = "button-backlight",
-                .type = PM8058_LED_DRVX,
-                .bank = 6,
-                .flags = PM8058_LED_LTU_EN,
-                .period_us = USEC_PER_SEC / 1000,
-                .start_index = 0,
-                .duites_size = 8,
-                .duty_time_ms = 32,
-                .lut_flag = PM_PWM_LUT_RAMP_UP | PM_PWM_LUT_PAUSE_HI_EN,
-                .out_current = 24,
-        },
-};
-
-static struct pm8058_led_platform_data pm8058_leds_data_CH = {
-        .led_config = pm_led_config_CH,
-        .num_leds = ARRAY_SIZE(pm_led_config_CH),
-        .duties = {0, 15, 30, 45, 60, 75, 90, 100,
-                   100, 90, 75, 60, 45, 30, 15, 0,
-                   0, 0, 0, 0, 0, 0, 0, 0,
-                   0, 0, 0, 0, 0, 0, 0, 0,
-                   0, 0, 0, 0, 0, 0, 0, 0,
-                   0, 0, 0, 0, 0, 0, 0, 0,
-                   0, 0, 0, 0, 0, 0, 0, 0,
-                   0, 0, 0, 0, 0, 0, 0, 0},
-};
-static struct platform_device pm8058_leds_CH = {
-        .name   = "leds-pm8058",
-        .id     = -1,
-        .dev    = {
-                .platform_data  = &pm8058_leds_data_CH,
-        },
-};
-
-
 #define PM8058ADC_16BIT(adc) ((adc * 2200) / 65535) /* vref=2.2v, 16-bits resolution */
 int64_t primou_get_usbid_adc(void)
 {
@@ -3263,7 +4466,6 @@ static struct platform_device cable_detect_device = {
 };
 
 static struct platform_device *devices[] __initdata = {
-        &ram_console_device,
 #if defined(CONFIG_SERIAL_MSM) || defined(CONFIG_MSM_SERIAL_DEBUGGER)
         &msm_device_uart2,
 #endif
@@ -3280,6 +4482,11 @@ static struct platform_device *devices[] __initdata = {
 #endif
         &msm_device_smd,
         &msm_device_dmov,
+#if 0
+        &smc91x_device,
+        &smsc911x_device,
+        &msm_device_nand,
+#endif
         &msm_device_otg,
         &qsd_device_spi,
 #ifdef CONFIG_MSM_SSBI
@@ -3347,6 +4554,9 @@ static struct platform_device *devices[] __initdata = {
         &msm_adc_device,
         &msm_ebi0_thermal,
         &msm_ebi1_thermal,
+#ifdef CONFIG_ION_MSM
+	&ion_dev,
+#endif
 #ifdef CONFIG_SERIAL_BCM_BT_LPM
 	&bcm_bt_lpm_device,
 #endif
@@ -3362,109 +4572,6 @@ static struct platform_device *devices[] __initdata = {
         &cable_detect_device,
         &htc_headset_mgr,
         &htc_drm,
-};
-
-static struct platform_device *devices_CH[] __initdata = {
-	&ram_console_device,
-#if defined(CONFIG_SERIAL_MSM) || defined(CONFIG_MSM_SERIAL_DEBUGGER)
-	&msm_device_uart2,
-#endif
-#ifdef CONFIG_MSM_PROC_COMM_REGULATOR
-	&msm_proccomm_regulator_dev,
-#endif
-	&asoc_msm_pcm,
-	&asoc_msm_dai0,
-	&asoc_msm_dai1,
-#if defined(CONFIG_SND_MSM_MVS_DAI_SOC)
-	&asoc_msm_mvs,
-	&asoc_mvs_dai0,
-	&asoc_mvs_dai1,
-#endif
-	&msm_device_smd,
-	&msm_device_dmov,
-	&msm_device_otg,
-	&qsd_device_spi,
-#ifdef CONFIG_MSM_SSBI
-	&msm_device_ssbi_pmic1,
-#endif
-#ifdef CONFIG_I2C_SSBI
-	/*&msm_device_ssbi6,*/
-	&msm_device_ssbi7,
-#endif
-	&android_pmem_device,
-	&msm_migrate_pages_device,
-#ifdef CONFIG_MSM_ROTATOR
-	&msm_rotator_device,
-#endif
-	&android_pmem_adsp_device,
-	&android_pmem_adsp2_device,
-	&android_pmem_audio_device,
-	&msm_device_i2c,
-	&msm_device_i2c_2,
-	&hs_device,
-#ifdef CONFIG_MSM7KV2_AUDIO
-	&msm_aictl_device,
-	&msm_mi2s_device,
-	&msm_lpa_device,
-	&msm_aux_pcm_device,
-#endif
-
-#ifdef CONFIG_RAWCHIP
-       &msm_rawchip_device,
-#endif
-
-#ifdef CONFIG_S5K4E5YX
-	&msm_camera_sensor_s5k4e5yx,
-#endif
-
-	&msm_device_adspdec,
-	&qup_device_i2c,
-
-	&msm_kgsl_3d0,
-	&msm_kgsl_2d0,
-	&msm_device_vidc_720p,
-#ifdef CONFIG_MSM_GEMINI
-	&msm_gemini_device,
-#endif
-#ifdef CONFIG_MSM_VPE
-	&msm_vpe_device,
-#endif
-#if defined(CONFIG_TSIF) || defined(CONFIG_TSIF_MODULE)
-	&msm_device_tsif,
-#endif
-#ifdef CONFIG_MSM_SDIO_AL
-	/* &msm_device_sdio_al, */
-#endif
-
-#if defined(CONFIG_CRYPTO_DEV_QCRYPTO) || \
-		defined(CONFIG_CRYPTO_DEV_QCRYPTO_MODULE)
-	&qcrypto_device,
-#endif
-
-#if defined(CONFIG_CRYPTO_DEV_QCEDEV) || \
-		defined(CONFIG_CRYPTO_DEV_QCEDEV_MODULE)
-	&qcedev_device,
-#endif
-
-	&htc_battery_pdev,
-	&msm_adc_device,
-	&msm_ebi0_thermal,
-	&msm_ebi1_thermal,
-#ifdef CONFIG_SERIAL_BCM_BT_LPM
-	&bcm_bt_lpm_device,
-#endif
-#if defined(CONFIG_SERIAL_MSM_HS) || defined(CONFIG_SERIAL_MSM_HS_LPM)
-	&msm_device_uart_dm1,
-#endif
-#ifdef CONFIG_BT
-	&primou_rfkill,
-#endif
-
-
-	&pm8058_leds_CH,
-	&cable_detect_device,
-	&htc_headset_mgr,
-	&htc_drm,
 };
 
 static struct msm_gpio msm_i2c_gpios_hw[] = {
@@ -3572,9 +4679,6 @@ static struct msm_i2c_platform_data qup_i2c_pdata = {
 
 static void __init qup_device_i2c_init(void)
 {
-	/* Remove the gpio_request due to i2c-qup.c is done so. */
-	/*if (msm_gpios_request(qup_i2c_gpios_hw, ARRAY_SIZE(qup_i2c_gpios_hw)))
-		pr_err("failed to request I2C gpios\n");*/
 
 	qup_device_i2c.dev.platform_data = &qup_i2c_pdata;
 	/*This needs to be enabled only for OEMS*/
@@ -3588,12 +4692,6 @@ static void __init qup_device_i2c_init(void)
 }
 
 #ifdef CONFIG_I2C_SSBI
-/*
-static struct msm_i2c_ssbi_platform_data msm_i2c_ssbi6_pdata = {
-	.rsl_id = "D:PMIC_SSBI",
-	.controller_type = MSM_SBI_CTRL_SSBI2,
-};*/
-
 static struct msm_i2c_ssbi_platform_data msm_i2c_ssbi7_pdata = {
 	.rsl_id = "D:CODEC_SSBI",
 	.controller_type = MSM_SBI_CTRL_SSBI,
@@ -3604,7 +4702,6 @@ static void __init primou_init_irq(void)
 {
 	msm_init_irq();
 }
-
 struct vreg *vreg_s3;
 struct vreg *vreg_mmc;
 
@@ -3820,6 +4917,410 @@ static uint32_t msm_sdcc_setup_power(struct device *dv, unsigned int vdd)
 out:
 	return rc;
 }
+
+#if defined(CONFIG_MMC_MSM_SDC1_SUPPORT) && \
+	defined(CONFIG_CSDIO_VENDOR_ID) && \
+	defined(CONFIG_CSDIO_DEVICE_ID) && \
+	(CONFIG_CSDIO_VENDOR_ID == 0x70 && CONFIG_CSDIO_DEVICE_ID == 0x1117)
+
+#define MBP_ON  1
+#define MBP_OFF 0
+
+#define MBP_RESET_N \
+	GPIO_CFG(44, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_8MA)
+#define MBP_MODE_CTRL_0 \
+	GPIO_CFG(35, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA)
+#define MBP_MODE_CTRL_1 \
+	GPIO_CFG(36, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA)
+#define MBP_MODE_CTRL_2 \
+	GPIO_CFG(34, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA)
+#define TSIF_EN \
+	GPIO_CFG(35, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN,	GPIO_CFG_2MA)
+#define TSIF_DATA \
+	GPIO_CFG(36, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN,	GPIO_CFG_2MA)
+#define TSIF_CLK \
+	GPIO_CFG(34, 1, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA)
+
+static struct msm_gpio mbp_cfg_data[] = {
+	{GPIO_CFG(44, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_16MA),
+		"mbp_reset"},
+	{GPIO_CFG(85, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_16MA),
+		"mbp_io_voltage"},
+};
+
+static int mbp_config_gpios_pre_init(int enable)
+{
+	int rc = 0;
+
+	if (enable) {
+		rc = msm_gpios_request_enable(mbp_cfg_data,
+			ARRAY_SIZE(mbp_cfg_data));
+		if (rc) {
+			printk(KERN_ERR
+				"%s: Failed to turnon GPIOs for mbp chip(%d)\n",
+				__func__, rc);
+		}
+	} else
+		msm_gpios_disable_free(mbp_cfg_data, ARRAY_SIZE(mbp_cfg_data));
+	return rc;
+}
+
+static int mbp_setup_rf_vregs(int state)
+{
+	struct vreg *vreg_rf = NULL;
+	struct vreg *vreg_rf_switch	= NULL;
+	int rc;
+
+	vreg_rf = vreg_get(NULL, "s2");
+	if (IS_ERR(vreg_rf)) {
+		pr_err("%s: s2 vreg get failed (%ld)",
+				__func__, PTR_ERR(vreg_rf));
+		return -EFAULT;
+	}
+	vreg_rf_switch = vreg_get(NULL, "rf");
+	if (IS_ERR(vreg_rf_switch)) {
+		pr_err("%s: rf vreg get failed (%ld)",
+				__func__, PTR_ERR(vreg_rf_switch));
+		return -EFAULT;
+	}
+
+	if (state) {
+		rc = vreg_set_level(vreg_rf, 1300);
+		if (rc) {
+			pr_err("%s: vreg s2 set level failed (%d)\n",
+					__func__, rc);
+			return rc;
+		}
+
+		rc = vreg_enable(vreg_rf);
+		if (rc) {
+			printk(KERN_ERR "%s: vreg_enable(s2) = %d\n",
+					__func__, rc);
+		}
+
+		rc = vreg_set_level(vreg_rf_switch, 2600);
+		if (rc) {
+			pr_err("%s: vreg rf switch set level failed (%d)\n",
+					__func__, rc);
+			return rc;
+		}
+		rc = vreg_enable(vreg_rf_switch);
+		if (rc) {
+			printk(KERN_ERR "%s: vreg_enable(rf) = %d\n",
+					__func__, rc);
+		}
+	} else {
+		(void) vreg_disable(vreg_rf);
+		(void) vreg_disable(vreg_rf_switch);
+	}
+	return 0;
+}
+
+static int mbp_setup_vregs(int state)
+{
+	return rc;
+}
+
+static int mbp_set_tcxo_en(int enable)
+{
+	int rc;
+	const char *id = "UBMC";
+	struct vreg *vreg_analog = NULL;
+
+	rc = pmapp_clock_vote(id, PMAPP_CLOCK_ID_A1,
+		enable ? PMAPP_CLOCK_VOTE_ON : PMAPP_CLOCK_VOTE_OFF);
+	if (rc < 0) {
+		printk(KERN_ERR "%s: unable to %svote for a1 clk\n",
+			__func__, enable ? "" : "de-");
+		return -EIO;
+	}
+	if (!enable) {
+		vreg_analog = vreg_get(NULL, "gp4");
+	}
+	return rc;
+}
+
+static void mbp_set_freeze_io(int state)
+{
+	if (state)
+		gpio_set_value(85, 0);
+	else
+		gpio_set_value(85, 1);
+}
+
+static int mbp_set_core_voltage_en(int enable)
+{
+	int rc;
+	struct vreg *vreg_core1p2 = NULL;
+
+	vreg_core1p2 = vreg_get(NULL, "gp16");
+	if (IS_ERR(vreg_core1p2)) {
+		pr_err("%s: gp16 vreg get failed (%ld)",
+				__func__, PTR_ERR(vreg_core1p2));
+		return -EFAULT;
+	}
+	if (enable) {
+		rc = vreg_set_level(vreg_core1p2, 1200);
+		if (rc) {
+			pr_err("%s: vreg_set_level failed (%d)",
+					__func__, rc);
+		}
+		(void) vreg_enable(vreg_core1p2);
+
+		return 80;
+	} else {
+		gpio_set_value(85, 1);
+		return 0;
+	}
+	return rc;
+}
+
+static void mbp_set_reset(int state)
+{
+	if (state)
+		gpio_set_value(GPIO_PIN(MBP_RESET_N), 0);
+	else
+		gpio_set_value(GPIO_PIN(MBP_RESET_N), 1);
+}
+
+static int mbp_config_interface_mode(int state)
+{
+	if (state) {
+		gpio_tlmm_config(MBP_MODE_CTRL_0, GPIO_CFG_ENABLE);
+		gpio_tlmm_config(MBP_MODE_CTRL_1, GPIO_CFG_ENABLE);
+		gpio_tlmm_config(MBP_MODE_CTRL_2, GPIO_CFG_ENABLE);
+		gpio_set_value(GPIO_PIN(MBP_MODE_CTRL_0), 0);
+		gpio_set_value(GPIO_PIN(MBP_MODE_CTRL_1), 1);
+		gpio_set_value(GPIO_PIN(MBP_MODE_CTRL_2), 0);
+	} else {
+		gpio_tlmm_config(MBP_MODE_CTRL_0, GPIO_CFG_DISABLE);
+		gpio_tlmm_config(MBP_MODE_CTRL_1, GPIO_CFG_DISABLE);
+		gpio_tlmm_config(MBP_MODE_CTRL_2, GPIO_CFG_DISABLE);
+	}
+	return 0;
+}
+
+static int mbp_setup_adc_vregs(int state)
+{
+	struct vreg *vreg_adc = NULL;
+	int rc;
+
+	vreg_adc = vreg_get(NULL, "s4");
+	if (IS_ERR(vreg_adc)) {
+		pr_err("%s: s4 vreg get failed (%ld)",
+				__func__, PTR_ERR(vreg_adc));
+		return -EFAULT;
+	}
+	if (state) {
+		rc = vreg_set_level(vreg_adc, 2200);
+		if (rc) {
+			pr_err("%s: vreg_set_level failed (%d)",
+					__func__, rc);
+		}
+		rc = vreg_enable(vreg_adc);
+		if (rc) {
+			pr_err("%s: enable vreg adc failed (%d)",
+					__func__, rc);
+		}
+	} else {
+		rc = vreg_disable(vreg_adc);
+		if (rc) {
+			pr_err("%s: disable vreg adc failed (%d)",
+					__func__, rc);
+		}
+	}
+	return rc;
+}
+
+static int mbp_power_up(void)
+{
+	int rc;
+
+	rc = mbp_config_gpios_pre_init(MBP_ON);
+	if (rc)
+		goto exit;
+	pr_debug("%s: mbp_config_gpios_pre_init() done\n", __func__);
+
+	rc = mbp_setup_vregs(MBP_ON);
+	if (rc)
+		goto exit;
+	pr_debug("%s: gp4 (2.6) and s3 (1.8) done\n", __func__);
+
+	rc = mbp_set_tcxo_en(MBP_ON);
+	if (rc)
+		goto exit;
+	pr_debug("%s: tcxo clock done\n", __func__);
+
+	mbp_set_freeze_io(MBP_OFF);
+	pr_debug("%s: set gpio 85 to 1 done\n", __func__);
+
+	udelay(100);
+	mbp_set_reset(MBP_ON);
+
+	udelay(300);
+	rc = mbp_config_interface_mode(MBP_ON);
+	if (rc)
+		goto exit;
+	pr_debug("%s: mbp_config_interface_mode() done\n", __func__);
+
+	udelay(100 + mbp_set_core_voltage_en(MBP_ON));
+	pr_debug("%s: power gp16 1.2V done\n", __func__);
+
+	mbp_set_freeze_io(MBP_ON);
+	pr_debug("%s: set gpio 85 to 0 done\n", __func__);
+
+	udelay(100);
+
+	rc = mbp_setup_rf_vregs(MBP_ON);
+	if (rc)
+		goto exit;
+	pr_debug("%s: s2 1.3V and rf 2.6V done\n", __func__);
+
+	rc = mbp_setup_adc_vregs(MBP_ON);
+	if (rc)
+		goto exit;
+	pr_debug("%s: s4 2.2V  done\n", __func__);
+
+	udelay(200);
+
+	mbp_set_reset(MBP_OFF);
+	pr_debug("%s: close gpio 44 done\n", __func__);
+
+	msleep(20);
+exit:
+	return rc;
+}
+
+static int mbp_power_down(void)
+{
+	int rc;
+	struct vreg *vreg_adc = NULL;
+
+	vreg_adc = vreg_get(NULL, "s4");
+	if (IS_ERR(vreg_adc)) {
+		pr_err("%s: s4 vreg get failed (%ld)",
+				__func__, PTR_ERR(vreg_adc));
+		return -EFAULT;
+	}
+
+	mbp_set_reset(MBP_ON);
+	pr_debug("%s: mbp_set_reset(MBP_ON) done\n", __func__);
+
+	udelay(100);
+
+	rc = mbp_setup_adc_vregs(MBP_OFF);
+	if (rc)
+		goto exit;
+	pr_debug("%s: vreg_disable(vreg_adc) done\n", __func__);
+
+	udelay(5);
+
+	rc = mbp_setup_rf_vregs(MBP_OFF);
+	if (rc)
+		goto exit;
+	pr_debug("%s: mbp_setup_rf_vregs(MBP_OFF) done\n", __func__);
+
+	udelay(5);
+
+	mbp_set_freeze_io(MBP_OFF);
+	pr_debug("%s: mbp_set_freeze_io(MBP_OFF) done\n", __func__);
+
+	udelay(100);
+	rc = mbp_set_core_voltage_en(MBP_OFF);
+	if (rc)
+		goto exit;
+	pr_debug("%s: mbp_set_core_voltage_en(MBP_OFF) done\n", __func__);
+
+	gpio_set_value(85, 1);
+
+	rc = mbp_set_tcxo_en(MBP_OFF);
+	if (rc)
+		goto exit;
+	pr_debug("%s: mbp_set_tcxo_en(MBP_OFF) done\n", __func__);
+
+	rc = mbp_config_gpios_pre_init(MBP_OFF);
+	if (rc)
+		goto exit;
+exit:
+	return rc;
+}
+
+static void (*mbp_status_notify_cb)(int card_present, void *dev_id);
+static void *mbp_status_notify_cb_devid;
+static int mbp_power_status;
+static int mbp_power_init_done;
+
+static uint32_t mbp_setup_power(struct device *dv,
+	unsigned int power_status)
+{
+	int rc = 0;
+	struct platform_device *pdev;
+
+	pdev = container_of(dv, struct platform_device, dev);
+
+	if (power_status == mbp_power_status)
+		goto exit;
+	if (power_status) {
+		pr_debug("turn on power of mbp slot");
+		rc = mbp_power_up();
+		mbp_power_status = 1;
+	} else {
+		pr_debug("turn off power of mbp slot");
+		rc = mbp_power_down();
+		mbp_power_status = 0;
+	}
+exit:
+	return rc;
+};
+
+int mbp_register_status_notify(void (*callback)(int, void *),
+	void *dev_id)
+{
+	mbp_status_notify_cb = callback;
+	mbp_status_notify_cb_devid = dev_id;
+	return 0;
+}
+
+static unsigned int mbp_status(struct device *dev)
+{
+	return mbp_power_status;
+}
+
+static uint32_t msm_sdcc_setup_power_mbp(struct device *dv, unsigned int vdd)
+{
+	struct platform_device *pdev;
+	uint32_t rc = 0;
+
+	pdev = container_of(dv, struct platform_device, dev);
+	rc = msm_sdcc_setup_power(dv, vdd);
+	if (rc) {
+		pr_err("%s: Failed to setup power (%d)\n",
+			__func__, rc);
+		goto out;
+	}
+	if (!mbp_power_init_done) {
+		mbp_setup_power(dv, 1);
+		mbp_setup_power(dv, 0);
+		mbp_power_init_done = 1;
+	}
+	if (vdd >= 0x8000) {
+		rc = mbp_setup_power(dv, (0x8000 == vdd) ? 0 : 1);
+		if (rc) {
+			pr_err("%s: Failed to config mbp chip power (%d)\n",
+				__func__, rc);
+			goto out;
+		}
+		if (mbp_status_notify_cb) {
+			mbp_status_notify_cb(mbp_power_status,
+				mbp_status_notify_cb_devid);
+		}
+	}
+out:
+	return 0;
+}
+
+#endif
+
 #endif
 
 #ifdef CONFIG_MMC_MSM_SDC4_SUPPORT
@@ -3832,9 +5333,50 @@ static unsigned int msm7x30_sdcc_slot_status(struct device *dev)
 			PM8058_GPIO_PM_TO_SYS(PRIMOU_GPIO_SDMC_CD_N));
 }
 #endif
+
+#ifdef CONFIG_MMC_MSM_SDC4_WP_SUPPORT
+static int msm_sdcc_get_wpswitch(struct device *dv)
+{
+	void __iomem *wp_addr = 0;
+	uint32_t ret = 0;
+	struct platform_device *pdev;
+
+	if (!(machine_is_msm7x30_surf()))
+		return -1;
+	pdev = container_of(dv, struct platform_device, dev);
+
+	wp_addr = ioremap(FPGA_SDCC_STATUS, 4);
+	if (!wp_addr) {
+		pr_err("%s: Could not remap %x\n", __func__, FPGA_SDCC_STATUS);
+		return -ENOMEM;
+	}
+
+	ret = (((readl(wp_addr) >> 4) >> (pdev->id-1)) & 0x01);
+	pr_info("%s: WP Status for Slot %d = 0x%x \n", __func__,
+							pdev->id, ret);
+	iounmap(wp_addr);
+
+	return ret;
+}
+#endif
 #endif
 
 #if defined(CONFIG_MMC_MSM_SDC1_SUPPORT)
+#if defined(CONFIG_CSDIO_VENDOR_ID) && \
+	defined(CONFIG_CSDIO_DEVICE_ID) && \
+	(CONFIG_CSDIO_VENDOR_ID == 0x70 && CONFIG_CSDIO_DEVICE_ID == 0x1117)
+static struct mmc_platform_data msm7x30_sdc1_data = {
+	.ocr_mask	= MMC_VDD_165_195 | MMC_VDD_27_28 | MMC_VDD_28_29,
+	.translate_vdd	= msm_sdcc_setup_power_mbp,
+	.mmc_bus_width  = MMC_CAP_4_BIT_DATA,
+	.status	        = mbp_status,
+	.register_status_notify = mbp_register_status_notify,
+	.msmsdcc_fmin	= 144000,
+	.msmsdcc_fmid	= 24576000,
+	.msmsdcc_fmax	= 24576000,
+	.nonremovable	= 0,
+};
+#else
 static struct mmc_platform_data msm7x30_sdc1_data = {
 	.ocr_mask	= MMC_VDD_165_195,
 	.translate_vdd	= msm_sdcc_setup_power,
@@ -3844,6 +5386,7 @@ static struct mmc_platform_data msm7x30_sdc1_data = {
 	.msmsdcc_fmax	= 49152000,
 	.nonremovable	= 0,
 };
+#endif
 #endif
 
 #ifdef CONFIG_MMC_MSM_SDC2_SUPPORT
@@ -3877,6 +5420,9 @@ static struct mmc_platform_data msm7x30_sdc4_data = {
 	.irq_flags   = IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
 #endif
 
+#ifdef CONFIG_MMC_MSM_SDC4_WP_SUPPORT
+	.wpswitch    = msm_sdcc_get_wpswitch,
+#endif
 	.msmsdcc_fmin	= 144000,
 	.msmsdcc_fmid	= 24576000,
 	.msmsdcc_fmax	= 49152000,
@@ -3929,11 +5475,17 @@ static void __init msm7x30_init_mmc(void)
 	}
 
 #ifdef CONFIG_MMC_MSM_SDC1_SUPPORT
+	if (machine_is_msm7x30_fluid()) {
+		msm7x30_sdc1_data.ocr_mask =  MMC_VDD_27_28 | MMC_VDD_28_29;
+		msm_sdc1_lvlshft_enable();
+	}
 	sdcc_vreg_data[0].vreg_data = vreg_s3;
 	sdcc_vreg_data[0].level = 1800;
 	msm_add_sdcc(1, &msm7x30_sdc1_data);
 #endif
 #ifdef CONFIG_MMC_MSM_SDC2_SUPPORT
+	if (machine_is_msm8x55_svlte_surf())
+		msm7x30_sdc2_data.msmsdcc_fmax =  24576000;
 	sdcc_vreg_data[1].vreg_data = vreg_s3;
 	sdcc_vreg_data[1].level = 1800;
 	msm7x30_sdc2_data.swfi_latency =
@@ -3944,10 +5496,6 @@ static void __init msm7x30_init_mmc(void)
 	sdcc_vreg_data[2].vreg_data = vreg_s3;
 	sdcc_vreg_data[2].level = 1800;
 /* HTC_WIFI_START */
-	/*
-	msm_sdcc_setup_gpio(3, 1);
-	msm_add_sdcc(3, &msm7x30_sdc3_data);
-	*/
 	primou_init_mmc(system_rev);
 /* HTC_WIFI_END*/
 #endif
@@ -3982,6 +5530,16 @@ static struct msm_tsif_platform_data tsif_platform_data = {
 };
 #endif /* defined(CONFIG_TSIF) || defined(CONFIG_TSIF_MODULE) */
 /* TSIF end   */
+
+static void __init pmic8058_leds_init(void)
+{
+	if (machine_is_msm7x30_surf())
+		pm8058_7x30_data.leds_pdata = &pm8058_surf_leds_data;
+	else if (!machine_is_msm7x30_fluid())
+		pm8058_7x30_data.leds_pdata = &pm8058_ffa_leds_data;
+	else if (machine_is_msm7x30_fluid())
+		pm8058_7x30_data.leds_pdata = &pm8058_fluid_leds_data;
+}
 
 static struct msm_spm_platform_data msm_spm_data __initdata = {
 	.reg_base_addr = MSM_SAW_BASE,
@@ -4024,19 +5582,10 @@ void primou_add_usb_devices(void)
 	if (get_radio_flag() & 0x20000)
 		android_usb_pdata.diag_init = 1;
 
-	/* add cdrom support in normal mode */
-	if (board_mfg_mode() == 0) {
-		android_usb_pdata.nluns = 3;
-		android_usb_pdata.cdrom_lun = 0x4;
-	}
-
 	config_primou_usb_id_gpios(0);
 	msm_device_gadget_peripheral.dev.parent = &msm_device_otg.dev;
 	platform_device_register(&msm_device_gadget_peripheral);
 	platform_device_register(&android_usb_device);
-
-        msm_device_hsusb_host.dev.parent = &msm_device_otg.dev;
-	platform_device_register(&msm_device_hsusb_host);
 }
 
 static int __init board_serialno_setup(char *serialno)
@@ -4054,69 +5603,6 @@ static void primou_te_gpio_config(void)
 	config_gpio_table(te_gpio_table, ARRAY_SIZE(te_gpio_table));
 }
 #endif
-
-static struct gpio_keys_button primou_gpio_keys[] = {
-	{
-		.code = KEY_POWER,
-		.gpio = PRIMOU_GPIO_KEYPAD_POWER_KEY,	
-		.active_low = 1,
-		.desc = "power",
-		.type = EV_KEY,
-		.wakeup = 1,
-		.debounce_interval = 10,	
-		.can_disable = 0,
-		.value = 0,			
-	},
-	{
-		.code = KEY_VOLUMEUP,
-		.gpio = PM8058_GPIO_PM_TO_SYS(PRIMOU_VOL_UP),	
-		.active_low = 1,
-		.desc = "volume up",
-		.type = EV_KEY,
-		.wakeup = 1,
-		.debounce_interval = 10,	
-		.can_disable = 0,		
-		.value = 0,			
-	},
-	{
-		.code = KEY_VOLUMEDOWN,
-		.gpio = PM8058_GPIO_PM_TO_SYS(PRIMOU_VOL_DN),	
-		.active_low = 1,
-		.desc = "volume down",
-		.type = EV_KEY,
-		.wakeup = 1,
-		.debounce_interval = 10,	
-		.can_disable = 0,		
-		.value = 0,			
-	},
-};
-
-static struct gpio_keys_platform_data primou_gpio_keys_platform_data = {
-	.buttons	= primou_gpio_keys,
-	.nbuttons	= ARRAY_SIZE(primou_gpio_keys),
-};
-
-static struct platform_device primou_gpio_keys_device = {
-	.name   = "gpio-keys",
-	.id     = 0,
-	.dev    = {
-		.platform_data  = &primou_gpio_keys_platform_data,
-	},
-};
-
-static uint32_t inputs_gpio_table[] = {
-	PCOM_GPIO_CFG(PRIMOU_GPIO_KEYPAD_POWER_KEY, 0, GPIO_INPUT,
-		      GPIO_PULL_UP, GPIO_4MA),
-};
-
-int __init primou_init_gpio_keys(void){
-	pr_info("Registering gpio keys\n");
-
-	gpio_tlmm_config(inputs_gpio_table[0], GPIO_CFG_ENABLE);
-	platform_device_register(&primou_gpio_keys_device);
-
-	return 0;
-}
 
 __setup("androidboot.serialno=", board_serialno_setup);
 static void __init primou_init(void)
@@ -4154,19 +5640,38 @@ static void __init primou_init(void)
 	msm_device_uart_dm1.dev.platform_data = &msm_uart_dm1_pdata;
 #endif
 
+#ifdef CONFIG_USB_MSM_OTG_72K
+	if (SOCINFO_VERSION_MAJOR(soc_version) >= 2 &&
+			SOCINFO_VERSION_MINOR(soc_version) >= 1) {
+		pr_debug("%s: SOC Version:2.(1 or more)\n", __func__);
+		msm_otg_pdata.ldo_set_voltage = 0;
+	}
+
+#ifdef CONFIG_USB_GADGET
+	msm_otg_pdata.swfi_latency =
+	msm_pm_data
+	[MSM_PM_SLEEP_MODE_RAMP_DOWN_AND_WAIT_FOR_INTERRUPT].latency;
+	msm_device_gadget_peripheral.dev.platform_data = &msm_gadget_pdata;
+#endif
+#endif
 	msm_device_otg.dev.platform_data = &msm_otg_pdata;
 
 #if defined(CONFIG_TSIF) || defined(CONFIG_TSIF_MODULE)
 	msm_device_tsif.dev.platform_data = &tsif_platform_data;
 #endif
-
-	msm_adc_pdata.dev_names = msm_adc_device_names;
-	msm_adc_pdata.num_adc = ARRAY_SIZE(msm_adc_device_names);
+	if (machine_is_msm7x30_fluid()) {
+		msm_adc_pdata.dev_names = msm_adc_fluid_device_names;
+		msm_adc_pdata.num_adc = ARRAY_SIZE(msm_adc_fluid_device_names);
+	} else {
+		msm_adc_pdata.dev_names = msm_adc_surf_device_names;
+		msm_adc_pdata.num_adc = ARRAY_SIZE(msm_adc_surf_device_names);
+	}
 
 #ifdef CONFIG_MSM_SSBI
 	msm_device_ssbi_pmic1.dev.platform_data =
 				&msm7x30_ssbi_pm8058_pdata;
 #endif
+	pmic8058_leds_init();
 
 	buses_init();
 	if (board_mfg_mode()==1) {
@@ -4174,17 +5679,13 @@ static void __init primou_init(void)
 		htc_headset_mgr_config[0].adc_max = 65535;
 	}
 
-	device_mid = get_model_id();
-	if (strstr(device_mid, "PK7612")) {
-		platform_add_devices(devices_CH, ARRAY_SIZE(devices_CH));
-	} else {
-		platform_add_devices(devices, ARRAY_SIZE(devices));
-	}
+	platform_add_devices(devices, ARRAY_SIZE(devices));
 
-	/*usb driver won't be loaded in MFG 58 station and gift mode*/
-	if (!(board_mfg_mode() == 6 || board_mfg_mode() == 7))
-		primou_add_usb_devices();
+	primou_add_usb_devices();
 
+#ifdef CONFIG_USB_EHCI_MSM_72K
+	msm_add_host(0, &msm_usb_host_pdata);
+#endif
 	msm7x30_init_mmc();
 	msm_qsd_spi_init();
 
@@ -4210,8 +5711,12 @@ static void __init primou_init(void)
 	ARRAY_SIZE(primou_flashlight));
 
 #endif
-
 	i2c_register_board_info(0, i2c_tps_devices, ARRAY_SIZE(i2c_tps_devices));
+#ifdef CONFIG_BOSCH_BMA150
+	if (machine_is_msm7x30_fluid())
+		i2c_register_board_info(0, bma150_board_info,
+					ARRAY_SIZE(bma150_board_info));
+#endif
 
 	i2c_register_board_info(0,
 			i2c_bma250_devices, ARRAY_SIZE(i2c_bma250_devices));
@@ -4229,13 +5734,9 @@ static void __init primou_init(void)
 	i2c_register_board_info(4 /* QUP ID */, msm_camera_boardinfo,
 			ARRAY_SIZE(msm_camera_boardinfo));
 
-
-	/*bt_power_init();*/
 #ifdef CONFIG_I2C_SSBI
-	/*msm_device_ssbi6.dev.platform_data = &msm_i2c_ssbi6_pdata;*/
 	msm_device_ssbi7.dev.platform_data = &msm_i2c_ssbi7_pdata;
 #endif
-
 	pm8058_gpios_init();
 
 	entry = create_proc_read_entry("emmc", 0, NULL, emmc_partition_read_proc, NULL);
@@ -4261,16 +5762,14 @@ static void __init primou_init(void)
 
 	i2c_register_board_info(0, i2c_devices,
 				ARRAY_SIZE(i2c_devices));
-/*
-	i2c_register_board_info(0, i2c_Sensors_devices,
-				ARRAY_SIZE(i2c_Sensors_devices));
-*/
 	device_mid = get_model_id();
 	if (strstr(device_mid, "PK7612")) {
 		if (1 == board_mfg_mode()) {
 			primou_synaptics_virtual_keys_attr.show = &primou_synaptics_virtual_keys_show_china_mfg;
+			primou_himax_virtual_keys_attr.show = &primou_himax_virtual_keys_show_china_mfg;
 		} else {
 			primou_synaptics_virtual_keys_attr.show = &primou_synaptics_virtual_keys_show_china;
+			primou_himax_virtual_keys_attr.show = &primou_himax_virtual_keys_show_china;
 		}
 	}
 
@@ -4282,8 +5781,7 @@ static void __init primou_init(void)
 	if (!properties_kobj || rc)
 		pr_err("failed to create board_properties\n");
 
-	//primou_init_keypad();
-	primou_init_gpio_keys();
+	primou_init_keypad();
 #ifdef CONFIG_MDP4_HW_VSYNC
 	primou_te_gpio_config();
 #endif
@@ -4331,6 +5829,77 @@ static int __init pmem_audio_size_setup(char *p)
 }
 early_param("pmem_audio_size", pmem_audio_size_setup);
 
+unsigned long size;
+unsigned long msm_ion_camera_size;
+
+static void fix_sizes(void)
+{
+	size = pmem_adsp_size;
+
+#ifdef CONFIG_ION_MSM
+	msm_ion_camera_size = size;
+#endif
+}
+
+#ifdef CONFIG_ION_MSM
+#ifdef CONFIG_MSM_MULTIMEDIA_USE_ION
+static struct ion_co_heap_pdata co_ion_pdata = {
+	.adjacent_mem_id = INVALID_HEAP_ID,
+	.align = PAGE_SIZE,
+};
+#endif
+
+/*
+ * These heaps are listed in the order they will be allocated.
+ * Don't swap the order unless you know what you are doing!
+ */
+static struct ion_platform_data ion_pdata = {
+	.nr = MSM_ION_HEAP_NUM,
+	.heaps = {
+		{
+			.id     = ION_SYSTEM_HEAP_ID,
+			.type   = ION_HEAP_TYPE_SYSTEM,
+			.name   = ION_VMALLOC_HEAP_NAME,
+		},
+#ifdef CONFIG_MSM_MULTIMEDIA_USE_ION
+		/* PMEM_ADSP = CAMERA */
+		{
+			.id     = ION_CAMERA_HEAP_ID,
+			.type   = ION_HEAP_TYPE_CARVEOUT,
+			.name   = ION_CAMERA_HEAP_NAME,
+			.memory_type = ION_EBI_TYPE,
+			.has_outer_cache = 1,
+			.extra_data = (void *)&co_ion_pdata,
+		},
+		/* PMEM_AUDIO */
+		{
+			.id     = ION_AUDIO_HEAP_ID,
+			.type   = ION_HEAP_TYPE_CARVEOUT,
+			.name   = ION_AUDIO_HEAP_NAME,
+			.memory_type = ION_EBI_TYPE,
+			.has_outer_cache = 1,
+			.extra_data = (void *)&co_ion_pdata,
+		},
+		/* PMEM_MDP = SF */
+		{
+			.id     = ION_SF_HEAP_ID,
+			.type   = ION_HEAP_TYPE_CARVEOUT,
+			.name   = ION_SF_HEAP_NAME,
+			.memory_type = ION_EBI_TYPE,
+			.has_outer_cache = 1,
+			.extra_data = (void *)&co_ion_pdata,
+		},
+#endif
+	}
+};
+
+static struct platform_device ion_dev = {
+	.name = "ion-msm",
+	.id = 1,
+	.dev = { .platform_data = &ion_pdata },
+};
+#endif
+
 static struct memtype_reserve msm7x30_reserve_table[] __initdata = {
 	[MEMTYPE_SMI] = {
 	},
@@ -4342,6 +5911,8 @@ static struct memtype_reserve msm7x30_reserve_table[] __initdata = {
 	},
 };
 
+#ifdef CONFIG_ANDROID_PMEM
+#ifndef CONFIG_MSM_MULTIMEDIA_USE_ION
 static void __init size_pmem_device(struct android_pmem_platform_data *pdata, unsigned long start, unsigned long size)
 {
 	pdata->start = start;
@@ -4353,18 +5924,24 @@ static void __init size_pmem_device(struct android_pmem_platform_data *pdata, un
 		pr_info("%s: pmem %s requests %lu bytes dynamically.\r\n",
 			__func__, pdata->name, size);
 }
+#endif
+#endif
 
 static void __init size_pmem_devices(void)
 {
 #ifdef CONFIG_ANDROID_PMEM
+#ifndef CONFIG_MSM_MULTIMEDIA_USE_ION
 	size_pmem_device(&android_pmem_adsp_pdata, 0, pmem_adsp_size);
 	size_pmem_device(&android_pmem_adsp2_pdata, 0, pmem_adsp2_size);
 	size_pmem_device(&android_pmem_audio_pdata, 0, pmem_audio_size);
 	size_pmem_device(&android_pmem_pdata, 0, pmem_sf_size);
 	msm7x30_reserve_table[MEMTYPE_EBI1].size += PMEM_KERNEL_EBI1_SIZE;
 #endif
+#endif
 }
 
+#ifdef CONFIG_ANDROID_PMEM
+#ifndef CONFIG_MSM_MULTIMEDIA_USE_ION
 static void __init reserve_memory_for(struct android_pmem_platform_data *p)
 {
 	if (p->start == 0) {
@@ -4372,21 +5949,49 @@ static void __init reserve_memory_for(struct android_pmem_platform_data *p)
 		msm7x30_reserve_table[p->memory_type].size += p->size;
 	}
 }
+#endif
+#endif
 
 static void __init reserve_pmem_memory(void)
 {
+
 #ifdef CONFIG_ANDROID_PMEM
+#ifndef CONFIG_MSM_MULTIMEDIA_USE_ION
 	reserve_memory_for(&android_pmem_adsp_pdata);
 	reserve_memory_for(&android_pmem_adsp2_pdata);
 	reserve_memory_for(&android_pmem_audio_pdata);
 	reserve_memory_for(&android_pmem_pdata);
 #endif
+#endif
+}
+
+static void __init size_ion_devices(void)
+{
+#ifdef CONFIG_MSM_MULTIMEDIA_USE_ION
+	ion_pdata.heaps[1].size = msm_ion_camera_size;
+	ion_pdata.heaps[2].size = MSM_ION_AUDIO_SIZE;
+	ion_pdata.heaps[3].size = MSM_ION_SF_SIZE;
+#endif
+}
+
+static void __init reserve_ion_memory(void)
+{
+#if defined(CONFIG_ION_MSM) && defined(CONFIG_MSM_MULTIMEDIA_USE_ION)
+	msm7x30_reserve_table[MEMTYPE_EBI0].size += msm_ion_camera_size;
+	msm7x30_reserve_table[MEMTYPE_EBI0].size += MSM_ION_AUDIO_SIZE;
+	msm7x30_reserve_table[MEMTYPE_EBI0].size += MSM_ION_SF_SIZE;
+#endif
 }
 
 static void __init msm7x30_calculate_reserve_sizes(void)
 {
+	/* Pmem is depreciated but still semi needed */
 	size_pmem_devices();
 	reserve_pmem_memory();
+	/* ION is where its at */
+	fix_sizes();
+	size_ion_devices();
+	reserve_ion_memory();
 }
 
 static int msm7x30_paddr_to_memtype(unsigned int paddr)
