@@ -19,7 +19,7 @@
 #include <linux/mfd/msm-adie-codec.h>
 #include <linux/delay.h>
 #include <linux/workqueue.h>
-#include <mach/tpa2051d3.h>
+#include <linux/tpa2051d3.h>
 #include <mach/gpio.h>
 #include <mach/pmic.h>
 #include <mach/dal.h>
