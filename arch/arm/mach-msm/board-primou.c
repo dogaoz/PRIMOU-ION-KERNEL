@@ -101,7 +101,7 @@
 #include <mach/sdio_al.h>
 #include "smd_private.h"
 #include "board-primou.h"
-#include <mach/tpa2051d3.h>
+#include <linux/tpa2051d3.h>
 #include "board-msm7x30-regulator.h"
 #include <mach/board_htc.h>
 #include <linux/ion.h>
